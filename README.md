@@ -1,2 +1,2 @@
-# visulinux
-Distribution linux à l'éfigie de visulibre
+# galarneau braille suite
+traducteur braille basé avec electron pour en la mémoire de Roland Galarneau un québécois qui a su marquer le début de l'impression braille au québec avec son apareil le convertobraille qui est devenu un service en outawais à hull précisément.  Cette apareil a évoluer en imprimante braille qui ensuite fut acheter par TSI (telesensory system inc)  qui a sortie la versapoint.
