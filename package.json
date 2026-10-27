@@ -1,0 +1,23 @@
+{
+  "name": "galarneau-braille-suite",
+  "version": "1.0.0",
+  "description": "Traducteur braille desktop basé sur Electron et liblouis-js.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "keywords": [
+    "braille",
+    "electron",
+    "accessibilite",
+    "liblouis"
+  ],
+  "license": "GPL-2.0-only",
+  "dependencies": {
+    "liblouis": "^0.4.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}

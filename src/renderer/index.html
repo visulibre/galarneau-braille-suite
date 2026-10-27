@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Galarneau Braille Suite</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace-welcome-title">
+      Aller directement à l’espace d’accueil
+    </a>
+
+    <main class="app">
+      <header class="app__header">
+        <h1>Traducteur braille</h1>
+        <p>
+          Crée un document accessible, puis traduis-le en braille ou en texte
+          avec les tables liblouis.
+        </p>
+      </header>
+
+      <section
+        id="workspace-welcome-panel"
+        class="panel"
+        aria-labelledby="workspace-welcome-title"
+      >
+        <h2 id="workspace-welcome-title">Espace vide</h2>
+        <p class="hint">
+          Utilise <kbd>Ctrl/Cmd + N</kbd> pour créer un document.
+          L’éditeur reste fermé tant qu’aucun document n’est ouvert.
+        </p>
+
+        <div class="field">
+          <h3 id="startup-normal-text-title">Texte normal</h3>
+          <p id="startup-normal-text"></p>
+        </div>
+
+        <section class="panel panel--compact" aria-labelledby="startup-braille-title">
+          <h3 id="startup-braille-title">Traduction braille (table fr-bfu-g2)</h3>
+          <p id="startup-braille-help" class="hint">
+            Zone braille en lecture seule avec points visibles à l’écran.
+          </p>
+          <textarea
+            id="startup-braille-output"
+            rows="3"
+            readonly
+            aria-readonly="true"
+            aria-describedby="startup-braille-help"
+          ></textarea>
+          <p
+            id="startup-braille-status"
+            class="status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          ></p>
+        </section>
+
+        <section class="panel panel--compact" aria-labelledby="startup-origin-title">
+          <h3 id="startup-origin-title">Origine du nom</h3>
+          <p id="startup-origin-text"></p>
+          <p id="startup-origin-help" class="hint">
+            Le même texte est aussi traduit en braille (table fr-bfu-g2).
+          </p>
+          <textarea
+            id="startup-origin-braille-output"
+            rows="5"
+            readonly
+            aria-readonly="true"
+            aria-describedby="startup-origin-help"
+          ></textarea>
+          <p
+            id="startup-origin-braille-status"
+            class="status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          ></p>
+        </section>
+      </section>
+
+      <section
+        id="new-document-panel"
+        class="panel"
+        aria-labelledby="new-document-title"
+        hidden
+      >
+        <h2 id="new-document-title">Créer un nouveau document</h2>
+        <p id="new-document-help" class="hint">
+          L’éditeur reste fermé tant qu’un document n’est pas créé.
+        </p>
+
+        <form id="new-document-form" class="panel--form">
+          <div class="field">
+            <label for="table-select">Table de traduction braille</label>
+            <select
+              id="table-select"
+              name="table"
+              required
+              aria-describedby="new-document-help"
+            ></select>
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="lines-per-page">Nombre de lignes par page</label>
+              <input
+                id="lines-per-page"
+                name="linesPerPage"
+                type="number"
+                min="1"
+                max="60"
+                step="1"
+                value="25"
+                aria-describedby="lines-per-page-help"
+                required
+              />
+              <p id="lines-per-page-help" class="hint">Valeur attendue : 1 à 60.</p>
+            </div>
+
+            <div class="field">
+              <label for="characters-per-line">Nombre de caractères par ligne</label>
+              <input
+                id="characters-per-line"
+                name="charactersPerLine"
+                type="number"
+                min="1"
+                max="120"
+                step="1"
+                value="40"
+                aria-describedby="characters-per-line-help"
+                required
+              />
+              <p id="characters-per-line-help" class="hint">
+                Valeur attendue : 1 à 120.
+              </p>
+            </div>
+          </div>
+
+          <div class="action-row">
+            <button
+              type="submit"
+              id="create-document-button"
+              aria-controls="editor-panel"
+              aria-expanded="false"
+            >
+              Créer le document
+            </button>
+            <button
+              type="button"
+              id="open-document-button"
+              class="button-secondary"
+            >
+              Ouvrir un document .gbs
+            </button>
+          </div>
+        </form>
+
+        <p
+          id="document-status-message"
+          class="status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        ></p>
+      </section>
+
+      <section
+        id="editor-panel"
+        class="panel"
+        aria-labelledby="editor-title"
+        hidden
+      >
+        <div class="panel__header">
+          <h2 id="editor-title">Éditeur du document</h2>
+          <div class="panel__header-actions">
+            <button type="button" id="save-document-button">
+              Enregistrer le document .gbs
+            </button>
+            <button type="button" id="close-document-button" class="button-secondary">
+              Fermer le document
+            </button>
+          </div>
+        </div>
+
+        <dl class="document-metadata">
+          <div>
+            <dt>Fichier .gbs</dt>
+            <dd id="active-document-file">Nouveau document non enregistré</dd>
+          </div>
+          <div>
+            <dt>Table active</dt>
+            <dd id="active-table-label">—</dd>
+          </div>
+          <div>
+            <dt>Format de page</dt>
+            <dd id="active-document-format">—</dd>
+          </div>
+        </dl>
+
+        <form id="translation-form" class="panel--form">
+          <section aria-labelledby="editor-lines-title">
+            <h3 id="editor-lines-title">Contenu du document</h3>
+            <div id="editor-pages" class="editor-pages"></div>
+            <div class="action-row">
+              <button
+                type="button"
+                id="add-page-button"
+                class="button-secondary"
+                aria-controls="editor-pages"
+              >
+                Ajouter une page
+              </button>
+              <button
+                type="button"
+                id="center-active-line-button"
+                class="button-secondary"
+                aria-controls="editor-pages"
+                aria-describedby="center-active-line-help"
+              >
+                Centrer la ligne active
+              </button>
+            </div>
+            <p id="center-active-line-help" class="hint">
+              Place le curseur sur une ligne, puis active ce bouton pour centrer un titre.
+            </p>
+          </section>
+
+          <fieldset class="field" aria-describedby="braille-input-help">
+            <legend>Mode de saisie</legend>
+            <label>
+              <input type="radio" name="input-mode" value="text" checked />
+              Clavier standard
+            </label>
+            <label>
+              <input type="radio" name="input-mode" value="braille-eight-key" />
+              Clavier braille 8 points
+            </label>
+            <p id="braille-input-help" class="hint">
+              En mode braille 8 points : 1=S, 2=D, 3=F, 4=J, 5=K, 6=L, 7=A, 8=;.
+              Appuie les touches ensemble pour produire un caractère braille.
+            </p>
+          </fieldset>
+
+          <section class="panel panel--compact" aria-labelledby="braille-keyboard-guide-title">
+            <h3 id="braille-keyboard-guide-title">Repère clavier braille (8 points)</h3>
+            <p id="braille-chord-status" class="hint">Aucun point actif.</p>
+            <div class="braille-dot-grid" aria-hidden="true">
+              <div id="braille-dot-1" class="braille-dot"><span>1</span><kbd>S</kbd></div>
+              <div id="braille-dot-4" class="braille-dot"><span>4</span><kbd>J</kbd></div>
+              <div id="braille-dot-2" class="braille-dot"><span>2</span><kbd>D</kbd></div>
+              <div id="braille-dot-5" class="braille-dot"><span>5</span><kbd>K</kbd></div>
+              <div id="braille-dot-3" class="braille-dot"><span>3</span><kbd>F</kbd></div>
+              <div id="braille-dot-6" class="braille-dot"><span>6</span><kbd>L</kbd></div>
+              <div id="braille-dot-7" class="braille-dot"><span>7</span><kbd>A</kbd></div>
+              <div id="braille-dot-8" class="braille-dot"><span>8</span><kbd>;</kbd></div>
+            </div>
+          </section>
+
+          <fieldset class="field" aria-describedby="show-space-markers-help">
+            <legend>Affichage des espaces</legend>
+            <label>
+              <input
+                id="show-space-markers-toggle"
+                type="checkbox"
+                name="showSpaceMarkers"
+              />
+              Afficher les espaces avec des points (·)
+            </label>
+            <p id="show-space-markers-help" class="hint">
+              Affiche une ligne de repère où chaque espace est visible, sans modifier le contenu
+              réel du document.
+            </p>
+          </fieldset>
+
+          <section class="panel panel--compact" aria-labelledby="space-markers-preview-title">
+            <h3 id="space-markers-preview-title">Repère des espaces (ligne active)</h3>
+            <p id="space-markers-preview-help" class="hint">
+              Les espaces sont affichés par le caractère « · » pour vérifier le centrage.
+            </p>
+            <textarea
+              id="active-line-space-preview"
+              class="space-preview"
+              rows="2"
+              readonly
+              aria-readonly="true"
+              aria-describedby="space-markers-preview-help"
+            ></textarea>
+            <p id="active-line-space-status" class="hint"></p>
+          </section>
+
+          <fieldset class="field" aria-describedby="realtime-translation-help">
+            <legend>Traduction en temps réel</legend>
+            <label>
+              <input
+                id="realtime-translation-toggle"
+                type="checkbox"
+                name="realtimeTranslation"
+                checked
+              />
+              Activer la traduction instantanée pendant l’édition
+            </label>
+            <p id="realtime-translation-help" class="hint">
+              Si désactivé, utilise le bouton Traduire ou le raccourci Ctrl/Cmd+T.
+              Basculer ce mode depuis le menu Traduire avec Ctrl/Cmd+Maj+T.
+            </p>
+          </fieldset>
+
+          <fieldset class="field">
+            <legend>Sens de traduction</legend>
+            <label>
+              <input
+                type="radio"
+                name="direction"
+                value="text-to-braille"
+                checked
+              />
+              Texte vers braille
+            </label>
+            <label>
+              <input type="radio" name="direction" value="braille-to-text" />
+              Braille vers texte
+            </label>
+          </fieldset>
+
+          <button type="submit" id="translate-button">Traduire le document</button>
+        </form>
+
+        <section class="panel panel--output" aria-labelledby="live-braille-preview-title">
+          <h3 id="live-braille-preview-title">Aperçu braille en direct</h3>
+          <p id="live-braille-preview-help" class="hint">
+            Traduction texte vers braille mise à jour automatiquement pendant l’édition.
+          </p>
+          <textarea
+            id="live-braille-preview"
+            rows="8"
+            readonly
+            aria-readonly="true"
+            aria-describedby="live-braille-preview-help"
+          ></textarea>
+          <p
+            id="live-braille-status"
+            class="status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          ></p>
+        </section>
+
+        <section class="panel panel--output" aria-labelledby="translation-result-title">
+          <h3 id="translation-result-title">Résultat</h3>
+          <p id="translation-result-help" class="hint">
+            Zone en lecture seule, annoncée par les lecteurs d’écran.
+          </p>
+          <textarea
+            id="translated-text"
+            rows="10"
+            readonly
+            aria-readonly="true"
+            aria-describedby="translation-result-help"
+          ></textarea>
+          <p
+            id="translation-status-message"
+            class="status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          ></p>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
