@@ -5,7 +5,10 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron ."
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:linux": "electron-builder --linux AppImage"
   },
   "keywords": [
     "braille",
@@ -18,6 +21,33 @@
     "liblouis": "^0.4.0"
   },
   "devDependencies": {
-    "electron": "^33.2.0"
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "org.visulibre.galarneau-braille-suite",
+    "productName": "Galarneau Braille Suite",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/liblouis-build/**",
+      "node_modules/liblouis/**"
+    ],
+    "files": [
+      "src/**/*",
+      "package.json",
+      "package-lock.json"
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
   }
 }

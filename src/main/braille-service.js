@@ -1,3 +1,4 @@
+const fs = require("node:fs");
 const path = require("node:path");
 const liblouis = require("liblouis");
 
@@ -29,6 +30,36 @@ const DEFAULT_TABLE = BRAILLE_TABLES[0].table;
 let isTableLoadingReady = false;
 let tableLoadingFailure = null;
 
+function resolveTableFolder() {
+  const buildPath = require.resolve("liblouis-build");
+  const defaultTableFolder = path.resolve(path.dirname(buildPath), "tables");
+  const asarSegment = `${path.sep}.asar${path.sep}`;
+  const unpackedTableFolder = defaultTableFolder.includes(asarSegment)
+    ? defaultTableFolder.replace(asarSegment, `${path.sep}.asar.unpacked${path.sep}`)
+    : null;
+  const resourceTableFolder = process.resourcesPath
+    ? path.join(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "node_modules",
+        "liblouis-build",
+        "tables",
+      )
+    : null;
+
+  const candidates = [defaultTableFolder, unpackedTableFolder, resourceTableFolder].filter(
+    (candidate) => typeof candidate === "string",
+  );
+  const availableTableFolder = candidates.find((candidate) => fs.existsSync(candidate));
+  if (availableTableFolder) {
+    return availableTableFolder;
+  }
+
+  throw new Error(
+    "Impossible de localiser les tables liblouis. Chemins testés: " + candidates.join(", "),
+  );
+}
+
 function ensureTableLoadingReady() {
   if (isTableLoadingReady) {
     return;
@@ -39,8 +70,7 @@ function ensureTableLoadingReady() {
   }
 
   try {
-    const buildPath = require.resolve("liblouis-build");
-    const tableFolder = path.resolve(path.dirname(buildPath), "tables");
+    const tableFolder = resolveTableFolder();
     liblouis.enableOnDemandTableLoading(tableFolder);
     isTableLoadingReady = true;
   } catch (error) {

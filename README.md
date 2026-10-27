@@ -71,6 +71,22 @@ npm install
 npm start
 ```
 
+## Générer un exécutable (Electron Builder)
+
+Construire l’exécutable Linux (AppImage) :
+
+```bash
+npm run dist:linux
+```
+
+Construire avec la cible par défaut configurée :
+
+```bash
+npm run dist
+```
+
+Les artefacts sont générés dans le dossier `dist/`.
+
 ## Utilisation
 
 1. Au démarrage, l’écran affiche un **espace vide** avec :

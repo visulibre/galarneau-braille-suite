@@ -14,6 +14,8 @@
   - `galarneau braille suite version 1.0 en la mémoire de Roland Galarneau.`
 - Panneau d’accueil enrichi avec un texte **Origine du nom** en français et sa
   traduction braille (`fr-bfu-g2`).
+- Packaging configuré avec **electron-builder** pour générer un exécutable
+  Linux AppImage.
 
 ## Fonctions déjà en place
 
@@ -67,6 +69,9 @@
 - 2026-10-26 : ajout d’un texte expliquant l’origine du nom “Galarneau Braille
   Suite” sur le panneau d’accueil, affiché en texte normal et traduit en
   braille.
+- 2026-10-26 : ajout de la configuration `electron-builder`, du script
+  `dist:linux` et d’un chargement robuste des tables `liblouis` en contexte
+  packagé (`asar`/`asar.unpacked`).
 
 ## Prochaine étape naturelle
 
