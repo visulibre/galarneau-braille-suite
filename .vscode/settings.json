@@ -1,0 +1,14 @@
+{
+  "chat.permissions.default": "autoApprove",
+  "chat.tools.terminal.enableAutoApprove": true,
+  "chat.tools.terminal.autoApprove": {
+    "/.*/": true
+  },
+  "chat.tools.edits.autoApprove": {
+    "*": true,
+    "**/*": true
+  },
+  "chat.tools.urls.autoApprove": {
+    "/.*/": true
+  }
+}

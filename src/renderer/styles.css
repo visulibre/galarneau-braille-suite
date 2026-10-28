@@ -227,7 +227,20 @@ button:focus-visible {
 
 .line-item {
   display: grid;
-  gap: 0.35rem;
+  grid-template-columns: minmax(5.25rem, auto) minmax(0, 1fr);
+  gap: 0.35rem 0.6rem;
+  align-items: center;
+}
+
+.line-position-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--muted);
+  display: inline-block;
+  min-width: 8ch;
+  white-space: nowrap;
 }
 
 .line-input {
@@ -235,16 +248,30 @@ button:focus-visible {
     "Courier New", monospace;
 }
 
+.line-input.is-italic-mode {
+  font-style: italic;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+}
+
 .space-preview,
 #startup-braille-output,
-#startup-origin-braille-output,
-#live-braille-preview {
+.line-translation {
   font-family: "Noto Sans Symbols 2", "Noto Sans", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, "Liberation Mono", "Courier New", monospace;
   line-height: 1.5;
 }
 
-#startup-origin-text,
+.line-translation {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  background: color-mix(in srgb, var(--panel) 90%, var(--accent) 10%);
+  white-space: pre-wrap;
+  word-break: break-word;
+  grid-column: 2;
+}
+
 #startup-normal-text {
   margin: 0;
 }
@@ -252,6 +279,20 @@ button:focus-visible {
 .line-counter {
   font-size: 0.9rem;
   color: var(--muted);
+  grid-column: 2;
+}
+
+@media (max-width: 760px) {
+  .line-item {
+    grid-template-columns: 1fr;
+  }
+
+  .line-position-label,
+  .line-input,
+  .line-counter,
+  .line-translation {
+    grid-column: 1;
+  }
 }
 
 .braille-dot-grid {

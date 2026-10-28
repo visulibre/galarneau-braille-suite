@@ -12,18 +12,45 @@
 - Message d’accueil affiché en texte normal **et** traduit en braille
   (`fr-bfu-g2`):
   - `galarneau braille suite version 1.0 en la mémoire de Roland Galarneau.`
-- Panneau d’accueil enrichi avec un texte **Origine du nom** en français et sa
-  traduction braille (`fr-bfu-g2`).
+- Panneau d’accueil simplifié: affichage direct du texte normal et de sa
+  traduction braille, sans libellés de zone visibles.
 - Packaging configuré avec **electron-builder** pour générer un exécutable
   Linux AppImage.
+- Chargement des tables `liblouis` validé en mode packagé
+  (`app.asar.unpacked`).
+- Exécution AppImage: dépendance système `libfuse.so.2` requise, avec fallback
+  possible via `--appimage-extract-and-run`.
+- Configuration workspace VS Code ajoutée pour réduire les demandes
+  d’autorisation Copilot (auto-approbation terminal, éditions et URLs).
+- Conformité BFU revue avec les sources liblouis officielles: classes
+  `italic`/`underline`/`bold`, indicateurs d’emphase (`456`, `6-3`,
+  `25-456`, fermeture `before 456`, seuil `4`) et caractères exclus `,\s`.
+- Correctif bas niveau appliqué sur la traduction emphase: écriture des
+  `typeform` en 16 bits (formtype liblouis), ce qui stabilise la traduction
+  stylée et supprime les aborts observés.
+- Compatibilité BFU ajoutée pour le soulignement/surlignage: si la classe
+  `underline` n’émet pas d’indicateur visible avec la version moteur active,
+  fallback automatique vers `italic` afin de conserver un marquage BFU.
+- Commandes BFU explicites alignées sur la demande utilisateur:
+  `Ctrl/Cmd+B` (gras), `Ctrl/Cmd+I` (italique), `Ctrl/Cmd+U` (surlignage),
+  avec libellés UI/menu harmonisés sur « surlignage BFU ».
+- Mode italique interactif en document normal (`.gnp`): `Ctrl/Cmd+I` sans
+  sélection active/désactive l’italique (insertion `<i>` / `</i>`), notification
+  d’état affichée, et rendu visuel italique de la ligne active lorsque le
+  curseur est dans une zone italique.
 
 ## Fonctions déjà en place
 
-- Documents `.gbs` avec persistance de la configuration:
+- Documents `.gnp` (normal) et `.gnb` (braille) avec persistance de la configuration:
   - table braille, lignes/page, caractères/ligne, direction ;
   - mode de saisie (`text` / `braille-eight-key`) ;
   - traduction temps réel ;
   - affichage des espaces visibles.
+- Création de document: choix du type dès le formulaire
+  (`.gnp` ou `.gnb`).
+- Traduction complète depuis un document `.gnp` vers le braille:
+  génération automatique d’un fichier compagnon `.gnb` avec le même nom de
+  base.
 - Menu **Fichier**: Nouveau, Ouvrir, Enregistrer, Enregistrer sous.
 - Menu **Traduire**:
   - Traduire le document (`Ctrl/Cmd + T`) ;
@@ -31,8 +58,30 @@
 - Menu **Édition**:
   - Centrer la ligne active (`Ctrl/Cmd + E`).
 - Saisie braille clavier 8 points:
-  - `S D F J K L A ;` pour points `1..8`.
-- Aperçu braille en direct.
+  - `F D S J K L A ;` pour points `1..8`.
+- Traduction intégrée directement sous chaque ligne de l’éditeur en document
+  normal (`.gnp`), sans panneau séparé.
+- Sur traduction complète `Ctrl/Cmd+T` d’un `.gnp` vers braille, l’éditeur
+  bascule automatiquement vers le document braille (le texte normal n’est plus
+  la base d’édition active).
+- Document braille (`.gnb`) sans panneau de traduction séparé: saisie clavier
+  standard disponible avec conversion liblouis instantanée dans la ligne
+  (affichage braille direct), et mode braille 8 points toujours disponible.
+- Mise en forme BFU (document normal `.gnp`) alignée sur les classes d’emphase
+  liblouis (`bold`, `italic`, `underline`) avec vérification dynamique du
+  support de la table active et messages d’état associés.
+- En document normal (`.gnp`), zone d’édition large non contrainte par les
+  paramètres braille (lignes/page, caractères/ligne).
+- En document braille (`.gnb`), retour automatique des mots: si une ligne
+  dépasse la largeur configurée, le mot est déplacé à la ligne suivante; si la
+  page est pleine, une nouvelle page est ajoutée automatiquement.
+- Repère de position compact au format `l#p#c#` sur les lignes braille,
+  mis à jour en temps réel avec le déplacement du curseur et la longueur
+  réellement affichée après conversion/abrègement.
+- Navigation clavier verticale dédiée:
+  - `Flèche haut` / `Flèche bas` ligne par ligne, avec accès aux lignes vides intermédiaires;
+  - `Entrée` en normal (`.gnp`) coupe la ligne au curseur;
+  - `Entrée` en braille (`.gnb`) descend à la ligne suivante, sans entrer dans la zone vide de fin de contenu.
 - Outil “Afficher les espaces” avec repère visuel `·` sur la ligne active.
 - Après centrage, curseur replacé au début de ligne pour vérifier les espaces
   en tête (utile afficheur braille).
@@ -42,7 +91,8 @@
 - `src/main/main.js`: menus, actions, raccourcis.
 - `src/main/preload.js`: pont IPC sécurisé.
 - `src/main/braille-service.js`: traduction liblouis.
-- `src/main/gbs-document-service.js`: lecture/écriture `.gbs`.
+- `src/main/gbs-document-service.js`: lecture/écriture `.gnp` / `.gnb`
+  (ouverture legacy `.gbs`).
 - `src/renderer/index.html`: structure UI.
 - `src/renderer/app.js`: logique principale renderer.
 - `src/renderer/styles.css`: styles, accessibilité visuelle.
@@ -72,8 +122,145 @@
 - 2026-10-26 : ajout de la configuration `electron-builder`, du script
   `dist:linux` et d’un chargement robuste des tables `liblouis` en contexte
   packagé (`asar`/`asar.unpacked`).
+- 2026-10-27 : validation du binaire packagé (`linux-unpacked`) et de
+  l’AppImage en mode `--appimage-extract-and-run`, sans erreur `liblouis`.
+- 2026-10-28 : écran d’accueil allégé en retirant la mention explicite
+  `fr-bfu-g2` dans les libellés visibles de la section braille d’accueil.
+- 2026-10-28 : correction du clavier braille 8 points pour utiliser `F` sur le
+  point 1 (et `S` sur le point 3) dans l’UI, la logique renderer et la
+  documentation.
+- 2026-10-28 : simplification du panneau d’accueil pour ne garder que les deux
+  contenus (normal + braille), sans libellés de zone visibles ni bloc
+  “Origine du nom”.
+- 2026-10-28 : retrait du libellé restant “Texte braille d’accueil” sur la zone
+  braille du panneau d’accueil.
+- 2026-10-28 : suppression de la séparation de l’écran d’édition en deux
+  sections de sortie; la traduction instantanée et la traduction complète
+  utilisent maintenant une vue traduite unique, intégrée dans l’éditeur.
+- 2026-10-28 : migration du format de documents vers `.gnp` (normal) et `.gnb`
+  (braille), avec choix du type à la création et génération automatique du
+  fichier `.gnb` compagnon lors d’une traduction complète `.gnp` -> braille.
+  Fichiers touchés: `src/renderer/index.html`, `src/renderer/app.js`,
+  `src/main/gbs-document-service.js`, `src/renderer/styles.css`, `README.md`.
+- 2026-10-28 : retrait du panneau de traduction séparé dans l’éditeur; la
+  traduction temps réel et la traduction complète s’affichent maintenant
+  directement sous chaque ligne du document.
+  Fichiers touchés: `src/renderer/index.html`, `src/renderer/app.js`,
+  `src/renderer/styles.css`, `README.md`.
+- 2026-10-28 : mode braille (`.gnb`) ajusté pour un affichage braille-only;
+  la saisie standard est désactivée, la sortie texte de traduction est masquée,
+  et l’aide UI/documentation reflète ce comportement.
+  Fichiers touchés: `src/renderer/app.js`, `src/renderer/index.html`,
+  `README.md`.
+- 2026-10-28 : ajustement du mode braille (`.gnb`) pour autoriser à nouveau la
+  saisie clavier standard avec conversion liblouis instantanée dans chaque
+  ligne; maintien de l’absence de panneau de traduction séparé.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`.
+- 2026-10-28 : remplacement des libellés longs de position de ligne par un
+  format compact `p#l#c#` affiché à gauche de chaque ligne, avec mise à jour
+  dynamique selon la position du curseur et la sortie effectivement affichée
+  (incluant l’abrègement braille).
+  Fichiers touchés: `src/renderer/app.js`, `src/renderer/styles.css`,
+  `README.md`.
+- 2026-10-28 : ajustement accessibilité du repère `p#l#c#` pour éviter les
+  annonces répétées à chaque frappe; le repère reste visuel à gauche, sans
+  notification vocale dynamique du numéro de ligne/caractère.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`.
+- 2026-10-28 : suppression de l’annonce continue du compteur `x/y` et retrait
+  du libellé verbal “Zone d’édition …” sur les lignes; compteur conservé en
+  visuel uniquement, repère compact maintenu à gauche.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`.
+- 2026-10-28 : correction d’affichage du repère gauche pour garantir le format
+  complet `l#p#c#` (incluant `c` + numéro), suppression du nom accessible
+  `p#l#` du champ pour éviter les confusions de lecture.
+  Fichiers touchés: `src/renderer/app.js`, `src/renderer/styles.css`,
+  `README.md`.
+- 2026-10-28 : repère `l#p#c#` reconnecté au champ d’édition via
+  `aria-labelledby` pour réapparition sur la plage braille, tout en conservant
+  le compteur `x/y` masqué aux annonces (`aria-hidden`).
+  Fichiers touchés: `src/renderer/app.js`.
+- 2026-10-28 : correction de la conversion braille instantanée en mode saisie
+  standard `.gnb` avec un buffer texte source par ligne (évite de retraduire le
+  braille déjà affiché), ce qui rétablit l’abrègement à mesure de la frappe et
+  au plus tard à l’espace selon les règles de table.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`.
+- 2026-10-28 : ordre du repère visuel ajusté selon préférence utilisateur en
+  `l#p#c#` (ligne, page, caractère) au lieu de `p#l#c#`.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+- 2026-10-28 : `Ctrl/Cmd+T` sur un document normal `.gnp` en direction
+  texte->braille bascule maintenant automatiquement l’éditeur sur le document
+  braille; la génération `.gnb` est conservée si possible, sinon bascule en
+  braille non enregistré.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+- 2026-10-28 : ajout du flux de renvoi automatique des mots et de pagination
+  automatique pendant la saisie (normal et braille), avec conservation du
+  buffer source en mode braille pour garder la traduction instantanée cohérente.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+- 2026-10-28 : amélioration de rigueur du wrapping en mode braille: la coupure
+  de ligne utilise désormais la longueur braille traduite réellement affichée
+  (après abrègement), pour éviter les retours anticipés basés sur la longueur
+  du texte source.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+- 2026-10-28 : séparation stricte des comportements normal vs braille dans
+  l’éditeur: le mode normal n’applique plus les limites braille (zone large,
+  sans repère `l#p#c#` ni compteur `x/y`), le mode braille conserve les
+  contraintes et la pagination; ajout de la navigation `Flèche haut/bas` et
+  `Entrée` entre lignes; redimensionnement de la traduction complète selon
+  caractères/ligne et lignes/page braille avant bascule `.gnp` -> `.gnb`.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+- 2026-10-28 : ajustement de la navigation: les lignes vides intermédiaires
+  redeviennent accessibles en déplacement vertical, mais la descente est
+  bloquée dans la zone vide de fin de contenu; maintien de `Entrée` en mode
+  normal pour couper la ligne à la position du curseur.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+- 2026-10-28 : conformité BFU renforcée pour l’emphase (italique, gras,
+  soulignement) : exposition IPC du support de styles par table, désactivation
+  des actions non supportées, aide contextuelle de conformité, alias de
+  balises françaises supplémentaires (`<souligner>`, `<surligner>`, etc.),
+  et harmonisation du libellé UI vers « soulignement ».
+  Références documentées dans le README (tables `fr-bfu-g2.ctb` /
+  `fr-bfu-comp6.utb` + manuel liblouis).
+  Fichiers touchés: `src/main/braille-service.js`, `src/main/main.js`,
+  `src/main/preload.js`, `src/renderer/app.js`, `src/renderer/index.html`,
+  `README.md`, `.github/project-memory.md`.
+- 2026-10-28 : ajout d’une configuration workspace Copilot pour approuver
+  automatiquement les actions d’agent dans ce dépôt (permissions par défaut en
+  auto-approbation, terminal, modifications de fichiers et URLs).
+  Fichiers touchés: `.vscode/settings.json`, `.github/project-memory.md`.
+- 2026-10-28 : vérification web des règles BFU (tables `fr-bfu-comp6.utb` et
+  `fr-bfu-g2.ctb`, documentation liblouis) et alignement de l’application:
+  correction de l’allocation/écriture `typeform` en 16 bits, ajout alias
+  `<surlignage>`, enrichissement de l’aide UI et de la documentation de
+  conformité.
+  Fichiers touchés: `src/main/braille-service.js`, `src/renderer/app.js`,
+  `src/renderer/index.html`, `README.md`, `.github/project-memory.md`.
+- 2026-10-28 : ajout d’un fallback de compatibilité pour l’emphase
+  soulignement BFU: lorsque `underline` ne produit pas d’indicateur visible,
+  application du masque `italic` pour conserver un marquage braille explicite
+  sur `<u>`, `<surligne>` et `<surlignage>`.
+  Fichiers touchés: `src/main/braille-service.js`, `src/renderer/app.js`,
+  `README.md`, `.github/project-memory.md`.
+- 2026-10-28 : harmonisation des commandes de mise en forme BFU selon le
+  vocabulaire « surligner » : menu « Appliquer le surlignage BFU » en
+  `Ctrl/Cmd+U`, bouton « Surligner BFU », alias d’action renderer
+  `apply-highlight-style` (compatible avec `apply-underline-style`), et
+  documentation mise à jour.
+  Fichiers touchés: `src/main/main.js`, `src/renderer/app.js`,
+  `src/renderer/index.html`, `README.md`, `.github/project-memory.md`.
+- 2026-10-28 : ajout du basculement d’italique au clavier en mode normal:
+  `Ctrl/Cmd+I` sur curseur seul alterne ouverture/fermeture italique,
+  notifications « activé/désactivé », et classe visuelle dynamique
+  `is-italic-mode` sur la ligne active.
+  Fichiers touchés: `src/renderer/app.js`, `src/renderer/styles.css`,
+  `README.md`, `.github/project-memory.md`.
 
 ## Prochaine étape naturelle
 
-- Ajouter d’autres options de traitement de texte (par exemple aligner à gauche,
-  aligner à droite) avec la même logique d’accessibilité.
+- Ajouter des tests automatiques dédiés à la mise en forme BFU (balises,
+  emphases multi-mots, tables non supportées) pour sécuriser les régressions.

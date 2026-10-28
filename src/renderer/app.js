@@ -1,22 +1,23 @@
 const GBS_DOCUMENT_FORMAT = "galarneau-braille-suite-document";
-const GBS_DOCUMENT_FORMAT_VERSION = 1;
+const GBS_DOCUMENT_FORMAT_VERSION = 2;
+const DOCUMENT_TYPE_NORMAL = "normal";
+const DOCUMENT_TYPE_BRAILLE = "braille";
+const DOCUMENT_EXTENSION_BY_TYPE = Object.freeze({
+  [DOCUMENT_TYPE_NORMAL]: ".gnp",
+  [DOCUMENT_TYPE_BRAILLE]: ".gnb",
+});
 const INPUT_MODE_TEXT = "text";
 const INPUT_MODE_BRAILLE = "braille-eight-key";
 const LEGACY_INPUT_MODE_BRAILLE = "braille-six-key";
 const APP_VERSION_LABEL = "1.0";
 const STARTUP_TEXT_MESSAGE =
   `galarneau braille suite version ${APP_VERSION_LABEL} en la mémoire de Roland Galarneau.`;
-const STARTUP_ORIGIN_TEXT_MESSAGE =
-  "Le nom Galarneau Braille Suite rend hommage à Roland Galarneau, " +
-  "inventeur québécois de Hull. Dans les années 1960, il a conçu le " +
-  "Converto-Braille, une machine pionnière qui facilitait la conversion " +
-  "de textes imprimés en braille.";
 const STARTUP_TEXT_BRAILLE_TABLE_ID = "fr-bfu-g2";
 const BRAILLE_KEY_TO_DOT = Object.freeze({
   a: 7,
-  s: 1,
+  f: 1,
   d: 2,
-  f: 3,
+  s: 3,
   j: 4,
   k: 5,
   l: 6,
@@ -37,12 +38,10 @@ const workspaceWelcomePanel = document.querySelector("#workspace-welcome-panel")
 const startupNormalText = document.querySelector("#startup-normal-text");
 const startupBrailleOutput = document.querySelector("#startup-braille-output");
 const startupBrailleStatus = document.querySelector("#startup-braille-status");
-const startupOriginText = document.querySelector("#startup-origin-text");
-const startupOriginBrailleOutput = document.querySelector("#startup-origin-braille-output");
-const startupOriginBrailleStatus = document.querySelector("#startup-origin-braille-status");
 
 const newDocumentPanel = document.querySelector("#new-document-panel");
 const newDocumentForm = document.querySelector("#new-document-form");
+const documentTypeRadios = document.querySelectorAll('input[name="document-type"]');
 const tableSelect = document.querySelector("#table-select");
 const linesPerPageInput = document.querySelector("#lines-per-page");
 const charactersPerLineInput = document.querySelector("#characters-per-line");
@@ -54,6 +53,10 @@ const editorPanel = document.querySelector("#editor-panel");
 const editorPages = document.querySelector("#editor-pages");
 const addPageButton = document.querySelector("#add-page-button");
 const centerActiveLineButton = document.querySelector("#center-active-line-button");
+const applyBoldStyleButton = document.querySelector("#apply-bold-style-button");
+const applyItalicStyleButton = document.querySelector("#apply-italic-style-button");
+const applyUnderlineStyleButton = document.querySelector("#apply-underline-style-button");
+const bfuStyleHelp = document.querySelector("#bfu-style-help");
 const closeDocumentButton = document.querySelector("#close-document-button");
 const saveDocumentButton = document.querySelector("#save-document-button");
 const activeDocumentFile = document.querySelector("#active-document-file");
@@ -62,15 +65,13 @@ const activeDocumentFormat = document.querySelector("#active-document-format");
 
 const translationForm = document.querySelector("#translation-form");
 const translateButton = document.querySelector("#translate-button");
-const translatedText = document.querySelector("#translated-text");
+const translationInlineHelp = document.querySelector("#translation-inline-help");
 const translationStatusMessage = document.querySelector("#translation-status-message");
 const realtimeTranslationToggle = document.querySelector("#realtime-translation-toggle");
 const showSpaceMarkersToggle = document.querySelector("#show-space-markers-toggle");
 const directionRadios = document.querySelectorAll('input[name="direction"]');
 const inputModeRadios = document.querySelectorAll('input[name="input-mode"]');
 const brailleChordStatus = document.querySelector("#braille-chord-status");
-const liveBraillePreview = document.querySelector("#live-braille-preview");
-const liveBrailleStatus = document.querySelector("#live-braille-status");
 const activeLineSpacePreview = document.querySelector("#active-line-space-preview");
 const activeLineSpaceStatus = document.querySelector("#active-line-space-status");
 const brailleDotElements = new Map(
@@ -82,11 +83,14 @@ const state = {
   documentConfig: null,
   documentMeta: null,
   pages: [],
+  inlineTranslatedLines: [],
+  documentType: DOCUMENT_TYPE_NORMAL,
   filePath: null,
   isDirty: false,
   inputMode: INPUT_MODE_TEXT,
   realtimeTranslationEnabled: true,
   showSpaceMarkersEnabled: false,
+  styleSupportByTable: new Map(),
 };
 
 const brailleChordState = {
@@ -101,10 +105,47 @@ let isFileBusy = false;
 let liveBraillePreviewTimerId = null;
 let liveBraillePreviewRequestId = 0;
 let lastFocusedLinePosition = null;
+let styleSupportRequestId = 0;
+const lineTranslationRequestIds = new Map();
+const lineSourceTextById = new Map();
 
 const BRAILLE_PREVIEW_DEBOUNCE_MS = 80;
+const NORMAL_EDITOR_LINES_PER_PAGE = 120;
+const BFU_STYLE_HELP_DEFAULT_TEXT =
+  "Sélectionne du texte dans la ligne active puis applique un style BFU. " +
+  "Le document enregistre des balises (<b>/<gras>, <i>/<italique>, <u>/<souligne>/<surligne>/<surlignage>) " +
+  "interprétées automatiquement lors de la traduction braille.";
+const BFU_STYLE_TAG_BY_NAME = Object.freeze({
+  bold: { openTag: "<b>", closeTag: "</b>", label: "gras" },
+  italic: { openTag: "<i>", closeTag: "</i>", label: "italique" },
+  underline: { openTag: "<u>", closeTag: "</u>", label: "surlignage" },
+});
+const BFU_STYLE_CLASS_BY_MARKUP_TAG = Object.freeze({
+  b: "bold",
+  strong: "bold",
+  bold: "bold",
+  gras: "bold",
+  i: "italic",
+  em: "italic",
+  italic: "italic",
+  italique: "italic",
+  u: "underline",
+  mark: "underline",
+  underline: "underline",
+  souligne: "underline",
+  souligner: "underline",
+  soulignement: "underline",
+  surligne: "underline",
+  surligner: "underline",
+  surlignage: "underline",
+  surlignement: "underline",
+});
 
 function configureLiveRegion(element, variant) {
+  if (!element) {
+    return;
+  }
+
   const isError = variant === "error";
   element.setAttribute("role", isError ? "alert" : "status");
   element.setAttribute("aria-live", isError ? "assertive" : "polite");
@@ -112,6 +153,10 @@ function configureLiveRegion(element, variant) {
 }
 
 function setStatus(element, message, variant = "neutral") {
+  if (!element) {
+    return;
+  }
+
   element.dataset.variant = variant;
   configureLiveRegion(element, variant);
 
@@ -127,9 +172,115 @@ function setStatus(element, message, variant = "neutral") {
   element.textContent = normalizedMessage;
 }
 
+function parseBfuStyleTagAt(inputText, startIndex) {
+  if (inputText[startIndex] !== "<") {
+    return null;
+  }
+
+  const closingBracketIndex = inputText.indexOf(">", startIndex + 1);
+  if (closingBracketIndex === -1) {
+    return null;
+  }
+
+  const rawTagContent = inputText
+    .slice(startIndex + 1, closingBracketIndex)
+    .trim()
+    .toLowerCase();
+  if (rawTagContent.length === 0) {
+    return null;
+  }
+
+  const isClosingTag = rawTagContent.startsWith("/");
+  const rawTagName = isClosingTag ? rawTagContent.slice(1).trim() : rawTagContent;
+  const tagParts = rawTagName.split(/\s+/u);
+  const firstTagPart = tagParts.length > 0 ? tagParts[0] : "";
+  const normalizedTagName = firstTagPart.replace(/\/$/u, "");
+  if (normalizedTagName.length === 0) {
+    return null;
+  }
+
+  const styleClass = BFU_STYLE_CLASS_BY_MARKUP_TAG[normalizedTagName];
+  if (!styleClass) {
+    return null;
+  }
+
+  return {
+    styleClass,
+    isClosingTag,
+    length: closingBracketIndex - startIndex + 1,
+  };
+}
+
+function isStyleClassActiveAtTextPosition(inputText, position, styleClass) {
+  if (typeof inputText !== "string" || typeof styleClass !== "string") {
+    return false;
+  }
+
+  const safePosition = Math.max(0, Math.min(position, inputText.length));
+  let depth = 0;
+  let index = 0;
+
+  while (index < safePosition) {
+    const styleTag = parseBfuStyleTagAt(inputText, index);
+    if (styleTag) {
+      if (styleTag.styleClass === styleClass) {
+        if (styleTag.isClosingTag) {
+          depth = Math.max(0, depth - 1);
+        } else {
+          depth += 1;
+        }
+      }
+
+      index += styleTag.length;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return depth > 0;
+}
+
+function getLineSelectionRange(lineInput) {
+  const valueLength = lineInput.value.length;
+  const selectionStart = lineInput.selectionStart ?? valueLength;
+  const selectionEnd = lineInput.selectionEnd ?? selectionStart;
+
+  return {
+    selectionStart,
+    selectionEnd,
+    isEmpty: selectionStart === selectionEnd,
+  };
+}
+
+function updateLineInputBfuVisualState(lineInput) {
+  if (!isLineInput(lineInput)) {
+    return;
+  }
+
+  if (state.documentType !== DOCUMENT_TYPE_NORMAL) {
+    lineInput.classList.remove("is-italic-mode");
+    return;
+  }
+
+  const { selectionStart } = getLineSelectionRange(lineInput);
+  const italicModeActive = isStyleClassActiveAtTextPosition(
+    lineInput.value,
+    selectionStart,
+    "italic",
+  );
+
+  lineInput.classList.toggle("is-italic-mode", italicModeActive);
+}
+
 function refreshCreationFormState() {
   const disableForm = isCreateLoading || isCreateLocked || isFileBusy;
 
+  documentTypeRadios.forEach((radio) => {
+    if (radio instanceof HTMLInputElement) {
+      radio.disabled = disableForm;
+    }
+  });
   tableSelect.disabled = disableForm;
   linesPerPageInput.disabled = disableForm;
   charactersPerLineInput.disabled = disableForm;
@@ -141,10 +292,19 @@ function refreshCreationFormState() {
 }
 
 function refreshTranslationButton() {
+  const isBrailleDocument =
+    state.documentConfig !== null && state.documentType === DOCUMENT_TYPE_BRAILLE;
   translateButton.disabled =
     isTranslationBusy ||
     isFileBusy ||
-    state.documentConfig === null;
+    state.documentConfig === null ||
+    isBrailleDocument;
+
+  if (isBrailleDocument) {
+    translateButton.textContent = "Conversion braille instantanée active";
+    return;
+  }
+
   translateButton.textContent = isTranslationBusy
     ? "Traduction en cours…"
     : "Traduire le document";
@@ -152,12 +312,57 @@ function refreshTranslationButton() {
 
 function refreshDocumentActionButtons() {
   const hasDocument = state.documentConfig !== null;
+  const isBrailleDocument = hasDocument && state.documentType === DOCUMENT_TYPE_BRAILLE;
+  const shouldDisableInputs = !hasDocument || isFileBusy || isTranslationBusy;
+  const styleSupport = getCurrentTableStyleSupport();
+  const isBoldUnsupported =
+    styleSupport !== null && styleSupport.emphasisClasses.bold.supported === false;
+  const isItalicUnsupported =
+    styleSupport !== null && styleSupport.emphasisClasses.italic.supported === false;
+  const isUnderlineUnsupported =
+    styleSupport !== null && styleSupport.emphasisClasses.underline.supported === false;
+
   addPageButton.disabled = !hasDocument || isFileBusy || isTranslationBusy;
   centerActiveLineButton.disabled = !hasDocument || isFileBusy || isTranslationBusy;
+  const disableBfuStyleActions =
+    !hasDocument || isFileBusy || isTranslationBusy || isBrailleDocument;
+  if (applyBoldStyleButton instanceof HTMLButtonElement) {
+    applyBoldStyleButton.disabled = disableBfuStyleActions || isBoldUnsupported;
+  }
+  if (applyItalicStyleButton instanceof HTMLButtonElement) {
+    applyItalicStyleButton.disabled = disableBfuStyleActions || isItalicUnsupported;
+  }
+  if (applyUnderlineStyleButton instanceof HTMLButtonElement) {
+    applyUnderlineStyleButton.disabled = disableBfuStyleActions || isUnderlineUnsupported;
+  }
   closeDocumentButton.disabled = !hasDocument || isFileBusy || isTranslationBusy;
   saveDocumentButton.disabled = !hasDocument || isFileBusy || isTranslationBusy;
   if (showSpaceMarkersToggle instanceof HTMLInputElement) {
     showSpaceMarkersToggle.disabled = !hasDocument || isFileBusy || isTranslationBusy;
+  }
+
+  inputModeRadios.forEach((radio) => {
+    if (!(radio instanceof HTMLInputElement)) {
+      return;
+    }
+
+    radio.disabled = shouldDisableInputs;
+  });
+
+  if (realtimeTranslationToggle instanceof HTMLInputElement) {
+    realtimeTranslationToggle.disabled = shouldDisableInputs || isBrailleDocument;
+  }
+
+  directionRadios.forEach((radio) => {
+    if (!(radio instanceof HTMLInputElement)) {
+      return;
+    }
+
+    radio.disabled = shouldDisableInputs || isBrailleDocument;
+  });
+
+  if (!shouldDisableInputs && !isBrailleDocument) {
+    setDirectionControlsForRealtime(state.realtimeTranslationEnabled);
   }
 }
 
@@ -165,6 +370,183 @@ function refreshAllActionStates() {
   refreshCreationFormState();
   refreshTranslationButton();
   refreshDocumentActionButtons();
+  updateTranslationInlineHelp();
+  updateBfuStyleHelp();
+}
+
+function isBrailleOnlyEditorMode() {
+  return state.documentConfig !== null && state.documentType === DOCUMENT_TYPE_BRAILLE;
+}
+
+function updateTranslationInlineHelp() {
+  if (!(translationInlineHelp instanceof HTMLElement)) {
+    return;
+  }
+
+  if (isBrailleOnlyEditorMode()) {
+    translationInlineHelp.textContent =
+      state.inputMode === INPUT_MODE_TEXT
+        ? "Mode braille actif: tape au clavier standard, la ligne est convertie en braille à mesure de la saisie."
+        : "Mode braille actif: saisie braille 8 points directe dans la ligne.";
+    return;
+  }
+
+  translationInlineHelp.textContent =
+    "La traduction instantanée et la traduction complète apparaissent sous chaque ligne.";
+}
+
+function getCurrentTableStyleSupport() {
+  if (!state.documentConfig) {
+    return null;
+  }
+
+  return state.styleSupportByTable.get(state.documentConfig.table) ?? null;
+}
+
+function isStyleSupportedByCurrentTable(styleName) {
+  const styleSupport = getCurrentTableStyleSupport();
+  if (!styleSupport || !styleSupport.emphasisClasses || !styleSupport.emphasisClasses[styleName]) {
+    return true;
+  }
+
+  return styleSupport.emphasisClasses[styleName].supported;
+}
+
+function getUnsupportedBfuStyleLabels(styleSupport) {
+  if (!styleSupport || !styleSupport.emphasisClasses) {
+    return [];
+  }
+
+  return Object.entries(BFU_STYLE_TAG_BY_NAME)
+    .filter(([styleName]) => styleSupport.emphasisClasses[styleName]?.supported === false)
+    .map(([, styleMeta]) => styleMeta.label);
+}
+
+function updateBfuStyleHelp() {
+  if (!(bfuStyleHelp instanceof HTMLElement)) {
+    return;
+  }
+
+  if (!state.documentConfig) {
+    bfuStyleHelp.textContent = BFU_STYLE_HELP_DEFAULT_TEXT;
+    return;
+  }
+
+  if (state.documentType === DOCUMENT_TYPE_BRAILLE) {
+    bfuStyleHelp.textContent =
+      "La mise en forme BFU se prépare en document normal (.gnp), puis s'applique automatiquement pendant la traduction.";
+    return;
+  }
+
+  const styleSupport = getCurrentTableStyleSupport();
+  if (!styleSupport) {
+    bfuStyleHelp.textContent =
+      "Vérification en cours de la table active pour les indicateurs BFU (italique, gras, surlignage/soulignement).";
+    return;
+  }
+
+  const unsupportedStyleLabels = getUnsupportedBfuStyleLabels(styleSupport);
+  if (unsupportedStyleLabels.length > 0) {
+    bfuStyleHelp.textContent =
+      `La table active ne déclare pas tous les styles demandés. Styles indisponibles: ${unsupportedStyleLabels.join(", ")}.`;
+    return;
+  }
+
+  if (styleSupport.bfuReference) {
+    const reference = styleSupport.bfuReference;
+    const fallbackNote =
+      reference.effectiveClassFallbacks?.underline === "italic"
+        ? " Compatibilité moteur active: le surlignage est appliqué via la classe italic."
+        : " Le surlignage est mappé sur la classe soulignement BFU.";
+    bfuStyleHelp.textContent =
+      `Conformité BFU active (${reference.sourceTable}) : classes ${reference.emphasisClasses.join(
+        ", ",
+      )}; mot ${reference.wordOpeningIndicator}…${reference.wordClosingIndicator}; ` +
+      `phrase ${reference.phraseOpeningIndicator} (fermeture ${reference.phraseClosingIndicator}); ` +
+      `seuil ${reference.phraseWordThreshold} mots; caractères exclus ${reference.noEmphasisCharacters}.` +
+      fallbackNote;
+    return;
+  }
+
+  bfuStyleHelp.textContent =
+    "La table active prend en charge les classes d'emphase liblouis (gras, italique, surlignage/soulignement).";
+}
+
+async function refreshActiveTableStyleSupport() {
+  if (!state.documentConfig || typeof window.brailleApi?.getStyleSupport !== "function") {
+    return;
+  }
+
+  const activeTable = state.documentConfig.table;
+  if (state.styleSupportByTable.has(activeTable)) {
+    refreshAllActionStates();
+    return;
+  }
+
+  const currentRequestId = ++styleSupportRequestId;
+  updateBfuStyleHelp();
+
+  try {
+    const response = await window.brailleApi.getStyleSupport({ table: activeTable });
+    if (styleSupportRequestId !== currentRequestId) {
+      return;
+    }
+
+    const emphasisClasses = response?.emphasisClasses;
+    state.styleSupportByTable.set(activeTable, {
+      table: activeTable,
+      emphasisClasses: {
+        bold: {
+          supported: emphasisClasses?.bold?.supported === true,
+          typeformMask: Number.isInteger(emphasisClasses?.bold?.typeformMask)
+            ? emphasisClasses.bold.typeformMask
+            : 0,
+        },
+        italic: {
+          supported: emphasisClasses?.italic?.supported === true,
+          typeformMask: Number.isInteger(emphasisClasses?.italic?.typeformMask)
+            ? emphasisClasses.italic.typeformMask
+            : 0,
+        },
+        underline: {
+          supported: emphasisClasses?.underline?.supported === true,
+          typeformMask: Number.isInteger(emphasisClasses?.underline?.typeformMask)
+            ? emphasisClasses.underline.typeformMask
+            : 0,
+        },
+      },
+      allSupported: response?.allSupported === true,
+      bfuReference:
+        response?.bfuReference && typeof response.bfuReference === "object"
+          ? response.bfuReference
+          : null,
+    });
+  } catch (error) {
+    if (styleSupportRequestId !== currentRequestId) {
+      return;
+    }
+
+    state.styleSupportByTable.set(activeTable, {
+      table: activeTable,
+      emphasisClasses: {
+        bold: { supported: true, typeformMask: 0 },
+        italic: { supported: true, typeformMask: 0 },
+        underline: { supported: true, typeformMask: 0 },
+      },
+      allSupported: true,
+      bfuReference: null,
+    });
+
+    setStatus(
+      documentStatusMessage,
+      `Impossible de vérifier la conformité des styles pour la table active: ${getErrorMessage(error)}`,
+      "neutral",
+    );
+  } finally {
+    if (styleSupportRequestId === currentRequestId) {
+      refreshAllActionStates();
+    }
+  }
 }
 
 function setWelcomePanelOpen(isOpen) {
@@ -188,13 +570,51 @@ function getErrorMessage(error) {
   return error instanceof Error ? error.message : "Une erreur inconnue est survenue.";
 }
 
+function normalizeDocumentType(value) {
+  return value === DOCUMENT_TYPE_BRAILLE ? DOCUMENT_TYPE_BRAILLE : DOCUMENT_TYPE_NORMAL;
+}
+
+function getDocumentExtension(documentType = state.documentType) {
+  const normalizedType = normalizeDocumentType(documentType);
+  return DOCUMENT_EXTENSION_BY_TYPE[normalizedType];
+}
+
+function getDocumentTypeLabel(documentType = state.documentType) {
+  const normalizedType = normalizeDocumentType(documentType);
+  return normalizedType === DOCUMENT_TYPE_BRAILLE
+    ? "document braille"
+    : "document normal";
+}
+
+function withDocumentExtension(filePath, documentType = state.documentType) {
+  const extension = getDocumentExtension(documentType);
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    return `document${extension}`;
+  }
+
+  if (filePath.toLowerCase().endsWith(extension)) {
+    return filePath;
+  }
+
+  const hasExtension = /\.[^./\\]+$/.test(filePath);
+  if (!hasExtension) {
+    return `${filePath}${extension}`;
+  }
+
+  return filePath.replace(/\.[^./\\]+$/, extension);
+}
+
+function toCompanionBraillePath(filePath) {
+  return withDocumentExtension(filePath, DOCUMENT_TYPE_BRAILLE);
+}
+
 function toFileName(filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) {
-    return "document.gbs";
+    return `document${getDocumentExtension()}`;
   }
 
   const chunks = filePath.split(/[/\\]/);
-  return chunks[chunks.length - 1] || "document.gbs";
+  return chunks[chunks.length - 1] || `document${getDocumentExtension()}`;
 }
 
 function appendTableOption(table) {
@@ -250,18 +670,10 @@ function setStartupBrailleStatus(message, variant = "neutral") {
   setStatus(startupBrailleStatus, message, variant);
 }
 
-function setStartupOriginBrailleStatus(message, variant = "neutral") {
-  if (!startupOriginBrailleStatus) {
-    return;
-  }
-
-  setStatus(startupOriginBrailleStatus, message, variant);
-}
-
 async function translateTextToStartupBraille(inputText) {
   const startupTable = findTableById(STARTUP_TEXT_BRAILLE_TABLE_ID);
   if (!startupTable) {
-    throw new Error("La table fr-bfu-g2 est introuvable pour la traduction de l’accueil.");
+    throw new Error("La table de traduction de l’accueil est introuvable.");
   }
 
   const response = await window.brailleApi.translate({
@@ -283,40 +695,19 @@ async function renderStartupWelcomeMessage(options = {}) {
   if (startupNormalText) {
     startupNormalText.textContent = STARTUP_TEXT_MESSAGE;
   }
-  if (startupOriginText) {
-    startupOriginText.textContent = STARTUP_ORIGIN_TEXT_MESSAGE;
-  }
 
   if (startupBrailleOutput instanceof HTMLTextAreaElement) {
     setStartupBrailleStatus("Traduction braille de l’accueil en cours…", "neutral");
     try {
       startupBrailleOutput.value = await translateTextToStartupBraille(STARTUP_TEXT_MESSAGE);
       setStartupBrailleStatus(
-        "Message d’accueil traduit en braille français (fr-bfu-g2).",
+        "Message d’accueil traduit en braille français.",
         "success",
       );
     } catch (error) {
       startupBrailleOutput.value = "";
       setStartupBrailleStatus(
         `Impossible de traduire le message d’accueil: ${getErrorMessage(error)}`,
-        "error",
-      );
-    }
-  }
-
-  if (startupOriginBrailleOutput instanceof HTMLTextAreaElement) {
-    setStartupOriginBrailleStatus("Traduction braille de l’origine du nom en cours…", "neutral");
-    try {
-      startupOriginBrailleOutput.value =
-        await translateTextToStartupBraille(STARTUP_ORIGIN_TEXT_MESSAGE);
-      setStartupOriginBrailleStatus(
-        "Origine du nom traduite en braille français (fr-bfu-g2).",
-        "success",
-      );
-    } catch (error) {
-      startupOriginBrailleOutput.value = "";
-      setStartupOriginBrailleStatus(
-        `Impossible de traduire l’origine du nom: ${getErrorMessage(error)}`,
         "error",
       );
     }
@@ -357,7 +748,7 @@ function buildEmptyPage(linesPerPage) {
 }
 
 function focusLineInput(pageIndex, lineIndex) {
-  const lineInput = document.querySelector(`#page-${pageIndex + 1}-line-${lineIndex + 1}`);
+  const lineInput = document.querySelector(`#${buildLineInputId(pageIndex, lineIndex)}`);
   if (lineInput instanceof HTMLInputElement) {
     lineInput.focus();
   }
@@ -378,13 +769,13 @@ function setDirectionControlsForRealtime(isEnabled) {
     }
 
     if (radio.value === "braille-to-text") {
-      radio.disabled = isEnabled;
+      radio.disabled = isEnabled && state.documentType === DOCUMENT_TYPE_NORMAL;
     } else {
       radio.disabled = false;
     }
   });
 
-  if (isEnabled) {
+  if (isEnabled && state.documentType === DOCUMENT_TYPE_NORMAL) {
     setDirection("text-to-braille");
   }
 }
@@ -435,13 +826,15 @@ function setInputMode(mode, options = {}) {
     radio.checked = radio.value === normalizedMode;
   });
 
+  updateTranslationInlineHelp();
+
   if (!announce) {
     return;
   }
 
   const modeMessage =
     normalizedMode === INPUT_MODE_BRAILLE
-      ? "Mode de saisie braille actif: points 1 à 8 sur S D F J K L A ;."
+      ? "Mode de saisie braille actif: points 1 à 8 sur F D S J K L A ;."
       : "Mode de saisie clavier standard actif.";
   setStatus(documentStatusMessage, modeMessage, "neutral");
 }
@@ -539,7 +932,9 @@ function syncRealtimeTranslationMenuState(isEnabled) {
 
 function setRealtimeTranslationEnabled(value, options = {}) {
   const { announce = true } = options;
-  const isEnabled = normalizeRealtimeTranslationOption(value);
+  const isEnabled = isBrailleOnlyEditorMode()
+    ? true
+    : normalizeRealtimeTranslationOption(value);
 
   state.realtimeTranslationEnabled = isEnabled;
   setDirectionControlsForRealtime(isEnabled);
@@ -549,7 +944,10 @@ function setRealtimeTranslationEnabled(value, options = {}) {
     realtimeTranslationToggle.checked = isEnabled;
   }
 
-  if (isEnabled) {
+  if (isBrailleOnlyEditorMode()) {
+    cancelLiveBraillePreviewRefresh();
+    clearLiveBraillePreview();
+  } else if (isEnabled) {
     scheduleLiveBraillePreviewRefresh({ immediate: true });
   } else {
     cancelLiveBraillePreviewRefresh();
@@ -557,6 +955,15 @@ function setRealtimeTranslationEnabled(value, options = {}) {
   }
 
   if (!announce) {
+    return;
+  }
+
+  if (isBrailleOnlyEditorMode()) {
+    setStatus(
+      documentStatusMessage,
+      "Mode braille actif: conversion instantanée du clavier standard vers le braille.",
+      "neutral",
+    );
     return;
   }
 
@@ -581,6 +988,286 @@ function getLinePositionFromInput(lineInput) {
   }
 
   return { pageIndex, lineIndex };
+}
+
+function getEditorLinesPerPageForType(documentType, configuredLinesPerPage) {
+  if (documentType === DOCUMENT_TYPE_BRAILLE) {
+    return configuredLinesPerPage;
+  }
+
+  return NORMAL_EDITOR_LINES_PER_PAGE;
+}
+
+function getEditorLinesPerPage() {
+  if (!state.documentConfig) {
+    return NORMAL_EDITOR_LINES_PER_PAGE;
+  }
+
+  return getEditorLinesPerPageForType(state.documentType, state.documentConfig.linesPerPage);
+}
+
+function buildLineInputId(pageIndex, lineIndex) {
+  return `page-${pageIndex + 1}-line-${lineIndex + 1}`;
+}
+
+function getFlatLineIndex(pageIndex, lineIndex) {
+  if (!Array.isArray(state.pages) || state.pages.length === 0) {
+    return 0;
+  }
+
+  let flatIndex = 0;
+  for (let index = 0; index < pageIndex; index += 1) {
+    const pageLines = state.pages[index];
+    flatIndex += Array.isArray(pageLines) ? pageLines.length : 0;
+  }
+
+  return flatIndex + Math.max(0, lineIndex);
+}
+
+function getLinePositionFromFlatIndex(flatLineIndex) {
+  if (!Array.isArray(state.pages) || state.pages.length === 0) {
+    return null;
+  }
+
+  if (flatLineIndex < 0) {
+    return null;
+  }
+
+  let remaining = flatLineIndex;
+  for (let pageIndex = 0; pageIndex < state.pages.length; pageIndex += 1) {
+    const pageLines = state.pages[pageIndex];
+    const lineCount = Array.isArray(pageLines) ? pageLines.length : 0;
+    if (remaining < lineCount) {
+      return { pageIndex, lineIndex: remaining };
+    }
+
+    remaining -= lineCount;
+  }
+
+  return null;
+}
+
+function flattenDocumentLines() {
+  return state.pages.flat();
+}
+
+function isEditorLineEmpty(lineValue) {
+  return typeof lineValue !== "string" || lineValue.length === 0;
+}
+
+function findNextNonEmptyFlatLineIndex(flatLines, startFlatIndex, direction) {
+  if (!Array.isArray(flatLines) || flatLines.length === 0) {
+    return null;
+  }
+
+  const step = direction >= 0 ? 1 : -1;
+  for (
+    let flatLineIndex = startFlatIndex;
+    flatLineIndex >= 0 && flatLineIndex < flatLines.length;
+    flatLineIndex += step
+  ) {
+    if (!isEditorLineEmpty(flatLines[flatLineIndex])) {
+      return flatLineIndex;
+    }
+  }
+
+  return null;
+}
+
+function buildPagesFromFlatLines(flatLines, linesPerPageOverride = null) {
+  if (!state.documentConfig && linesPerPageOverride === null) {
+    return [];
+  }
+
+  const linesPerPage = Number.isInteger(linesPerPageOverride) && linesPerPageOverride > 0
+    ? linesPerPageOverride
+    : getEditorLinesPerPage();
+  const normalizedLines = Array.isArray(flatLines) ? flatLines.slice() : [];
+  if (normalizedLines.length === 0) {
+    normalizedLines.push("");
+  }
+
+  const pages = [];
+  for (let startIndex = 0; startIndex < normalizedLines.length; startIndex += linesPerPage) {
+    const pageLines = normalizedLines.slice(startIndex, startIndex + linesPerPage);
+    while (pageLines.length < linesPerPage) {
+      pageLines.push("");
+    }
+    pages.push(pageLines);
+  }
+
+  return pages;
+}
+
+function mergeOverflowWithLine(overflowText, targetLine) {
+  if (overflowText.length === 0) {
+    return targetLine;
+  }
+
+  if (targetLine.length === 0) {
+    return overflowText;
+  }
+
+  if (overflowText.endsWith(" ") || targetLine.startsWith(" ")) {
+    return `${overflowText}${targetLine}`;
+  }
+
+  return `${overflowText} ${targetLine}`;
+}
+
+function splitLineForWrap(lineValue, lineWidth) {
+  if (lineValue.length <= lineWidth) {
+    return { line: lineValue, overflow: "" };
+  }
+
+  const breakAtSpace = lineValue.lastIndexOf(" ", lineWidth);
+  if (breakAtSpace > 0) {
+    const line = lineValue.slice(0, breakAtSpace);
+    const overflow = lineValue.slice(breakAtSpace + 1).replace(/^\s+/u, "");
+    return { line, overflow };
+  }
+
+  return {
+    line: lineValue.slice(0, lineWidth),
+    overflow: lineValue.slice(lineWidth),
+  };
+}
+
+function wrapFlatLinesFromIndex(flatLines, startFlatIndex, lineWidth) {
+  const wrappedLines = Array.isArray(flatLines) ? flatLines.slice() : [];
+  const startIndex = Math.max(0, startFlatIndex);
+  let lineIndex = startIndex;
+  let hasChanged = false;
+  let lastAffectedIndex = startIndex;
+
+  while (lineIndex < wrappedLines.length) {
+    const currentLine = wrappedLines[lineIndex] ?? "";
+    if (currentLine.length <= lineWidth) {
+      lineIndex += 1;
+      continue;
+    }
+
+    const { line, overflow } = splitLineForWrap(currentLine, lineWidth);
+    if (line !== currentLine) {
+      wrappedLines[lineIndex] = line;
+      hasChanged = true;
+    }
+
+    if (overflow.length > 0) {
+      if (lineIndex + 1 >= wrappedLines.length) {
+        wrappedLines.push("");
+        hasChanged = true;
+      }
+
+      const nextLine = wrappedLines[lineIndex + 1] ?? "";
+      const mergedNextLine = mergeOverflowWithLine(overflow, nextLine);
+      if (mergedNextLine !== nextLine) {
+        wrappedLines[lineIndex + 1] = mergedNextLine;
+        hasChanged = true;
+      }
+      lastAffectedIndex = lineIndex + 1;
+    }
+
+    lineIndex += 1;
+  }
+
+  return {
+    lines: wrappedLines,
+    changed: hasChanged,
+    lastAffectedIndex,
+  };
+}
+
+function readSourceBufferLines(totalLines) {
+  const lines = [];
+
+  for (let flatLineIndex = 0; flatLineIndex < totalLines; flatLineIndex += 1) {
+    const linePosition = getLinePositionFromFlatIndex(flatLineIndex);
+    if (!linePosition) {
+      lines.push("");
+      continue;
+    }
+
+    const lineInputId = buildLineInputId(linePosition.pageIndex, linePosition.lineIndex);
+    const lineValue = lineSourceTextById.get(lineInputId);
+    lines.push(typeof lineValue === "string" ? lineValue : "");
+  }
+
+  return lines;
+}
+
+function writeSourceBufferLines(sourceLines) {
+  lineSourceTextById.clear();
+
+  sourceLines.forEach((lineValue, flatLineIndex) => {
+    const linePosition = getLinePositionFromFlatIndex(flatLineIndex);
+    if (!linePosition) {
+      return;
+    }
+
+    const lineInputId = buildLineInputId(linePosition.pageIndex, linePosition.lineIndex);
+    lineSourceTextById.set(lineInputId, typeof lineValue === "string" ? lineValue : "");
+  });
+}
+
+function focusLineByFlatIndex(flatLineIndex, caretPosition = null) {
+  const linePosition = getLinePositionFromFlatIndex(flatLineIndex);
+  if (!linePosition) {
+    return;
+  }
+
+  const lineInput = document.querySelector(`#${buildLineInputId(linePosition.pageIndex, linePosition.lineIndex)}`);
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  lineInput.focus();
+  const nextCaretPosition = typeof caretPosition === "number"
+    ? Math.max(0, Math.min(caretPosition, lineInput.value.length))
+    : lineInput.value.length;
+  lineInput.setSelectionRange(nextCaretPosition, nextCaretPosition);
+  updateLinePositionLabel(lineInput);
+  updateLineCharacterCounter(lineInput);
+}
+
+function buildCompactLineLabel(pageIndex, lineIndex, characterIndex) {
+  return `l${lineIndex + 1}p${pageIndex + 1}c${characterIndex}`;
+}
+
+function getLineCharacterIndexFromInput(lineInput) {
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return 1;
+  }
+
+  const lineLength = lineInput.value.length;
+  const selectionStart = lineInput.selectionStart ?? 0;
+  const cappedPosition = Math.max(0, Math.min(selectionStart, lineLength));
+  return Math.max(1, cappedPosition);
+}
+
+function updateLinePositionLabel(lineInput) {
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const linePosition = getLinePositionFromInput(lineInput);
+  if (!linePosition) {
+    return;
+  }
+
+  const labelElement = document.querySelector(`#${lineInput.id}-position`);
+  if (!(labelElement instanceof HTMLElement)) {
+    return;
+  }
+
+  const characterIndex = getLineCharacterIndexFromInput(lineInput);
+  const compactLabel = buildCompactLineLabel(
+    linePosition.pageIndex,
+    linePosition.lineIndex,
+    characterIndex,
+  );
+
+  labelElement.textContent = compactLabel;
 }
 
 function updateLastFocusedLinePosition(lineInput) {
@@ -720,9 +1407,10 @@ function confirmDiscardUnsavedChanges(actionLabel) {
     return true;
   }
 
+  const extension = getDocumentExtension();
   return window.confirm(
     `Le document actuel contient des changements non enregistrés.\n` +
-      `Veux-tu vraiment ${actionLabel} sans enregistrer le fichier .gbs ?`,
+      `Veux-tu vraiment ${actionLabel} sans enregistrer le fichier ${extension} ?`,
   );
 }
 
@@ -738,7 +1426,8 @@ function updateDocumentMetadata() {
   if (state.filePath) {
     activeDocumentFile.textContent = `${state.filePath}${unsavedStatus}`;
   } else {
-    activeDocumentFile.textContent = `Nouveau document .gbs non enregistré${unsavedStatus}`;
+    activeDocumentFile.textContent =
+      `Nouveau ${getDocumentTypeLabel()} ${getDocumentExtension()} non enregistré${unsavedStatus}`;
   }
 
   activeTableLabel.textContent = state.documentConfig.tableLabel;
@@ -761,6 +1450,376 @@ function markDocumentChanged() {
   updateDocumentMetadata();
 }
 
+function updateLineCharacterCounter(lineInput) {
+  if (!(lineInput instanceof HTMLInputElement) || !state.documentConfig) {
+    return;
+  }
+
+  const counter = document.querySelector(`#${lineInput.id}-counter`);
+  if (!counter) {
+    return;
+  }
+
+  if (state.documentType === DOCUMENT_TYPE_NORMAL) {
+    counter.textContent = "";
+    return;
+  }
+
+  counter.textContent = `${lineInput.value.length}/${state.documentConfig.charactersPerLine}`;
+}
+
+function buildSourceBufferFromDisplayLines() {
+  const sourceBuffer = new Map();
+  const documentLines = flattenDocumentLines();
+
+  documentLines.forEach((lineValue, flatLineIndex) => {
+    const linePosition = getLinePositionFromFlatIndex(flatLineIndex);
+    if (!linePosition) {
+      return;
+    }
+
+    const lineInputId = buildLineInputId(linePosition.pageIndex, linePosition.lineIndex);
+    sourceBuffer.set(lineInputId, lineValue);
+  });
+
+  return sourceBuffer;
+}
+
+function applyDisplayWordWrapFromFlatIndex(startFlatIndex) {
+  if (!state.documentConfig) {
+    return { changed: false, focusFlatIndex: startFlatIndex };
+  }
+
+  const lineWidth = state.documentConfig.charactersPerLine;
+  const currentLines = flattenDocumentLines();
+  const wrapResult = wrapFlatLinesFromIndex(currentLines, startFlatIndex, lineWidth);
+
+  if (!wrapResult.changed) {
+    return { changed: false, focusFlatIndex: startFlatIndex };
+  }
+
+  state.pages = buildPagesFromFlatLines(wrapResult.lines);
+  updateDocumentMetadata();
+
+  return {
+    changed: true,
+    focusFlatIndex: Math.min(
+      Math.max(startFlatIndex, wrapResult.lastAffectedIndex),
+      wrapResult.lines.length - 1,
+    ),
+  };
+}
+
+function containsBrailleUnicode(value) {
+  return /[\u2800-\u28FF]/u.test(value);
+}
+
+function computeSourceLineTextFromInputEvent(previousSourceText, lineInput, event) {
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return previousSourceText;
+  }
+
+  const fallbackDisplayedValue = lineInput.value;
+  if (!(event instanceof InputEvent)) {
+    return containsBrailleUnicode(fallbackDisplayedValue)
+      ? previousSourceText
+      : fallbackDisplayedValue;
+  }
+
+  const inputType = typeof event.inputType === "string" ? event.inputType : "";
+
+  if (
+    inputType === "insertText" ||
+    inputType === "insertCompositionText" ||
+    inputType === "insertFromPaste" ||
+    inputType === "insertFromDrop" ||
+    inputType === "insertReplacementText"
+  ) {
+    if (typeof event.data === "string" && event.data.length > 0) {
+      return `${previousSourceText}${event.data}`;
+    }
+
+    return containsBrailleUnicode(fallbackDisplayedValue)
+      ? previousSourceText
+      : fallbackDisplayedValue;
+  }
+
+  if (inputType === "deleteContentBackward") {
+    return previousSourceText.slice(0, -1);
+  }
+
+  if (inputType === "deleteWordBackward") {
+    return previousSourceText.replace(/\s*\S+\s*$/u, "");
+  }
+
+  if (inputType === "deleteByCut") {
+    return "";
+  }
+
+  if (inputType === "deleteContentForward" || inputType === "deleteWordForward") {
+    return previousSourceText;
+  }
+
+  return containsBrailleUnicode(fallbackDisplayedValue)
+    ? previousSourceText
+    : fallbackDisplayedValue;
+}
+
+function shouldTranslateLineToBrailleInPlace() {
+  if (!state.documentConfig || state.documentType !== DOCUMENT_TYPE_BRAILLE) {
+    return false;
+  }
+
+  if (!state.realtimeTranslationEnabled || state.inputMode !== INPUT_MODE_TEXT) {
+    return false;
+  }
+
+  return getDirection() === "text-to-braille";
+}
+
+async function translateBrailleTextLine(inputText, translationCache = null) {
+  if (!state.documentConfig) {
+    return "";
+  }
+
+  const normalizedInput = typeof inputText === "string" ? inputText : "";
+  if (normalizedInput.length === 0) {
+    return "";
+  }
+
+  if (translationCache instanceof Map && translationCache.has(normalizedInput)) {
+    return translationCache.get(normalizedInput);
+  }
+
+  const response = await window.brailleApi.translate({
+    table: state.documentConfig.table,
+    direction: "text-to-braille",
+    inputText: normalizedInput,
+  });
+
+  if (!response || typeof response.outputText !== "string") {
+    throw new Error("Le service de traduction a retourné une réponse invalide.");
+  }
+
+  const translatedLine = response.outputText.split("\n")[0] ?? "";
+  if (translationCache instanceof Map) {
+    translationCache.set(normalizedInput, translatedLine);
+  }
+
+  return translatedLine;
+}
+
+async function splitSourceLineByBrailleWidth(sourceLine, lineWidth, translationCache) {
+  const normalizedSource = typeof sourceLine === "string" ? sourceLine : "";
+  const fullLineDisplay = await translateBrailleTextLine(normalizedSource, translationCache);
+  if (fullLineDisplay.length <= lineWidth) {
+    return {
+      lineSource: normalizedSource,
+      overflowSource: "",
+      lineDisplay: fullLineDisplay,
+    };
+  }
+
+  let bestWordSplit = null;
+  let scanIndex = 0;
+  while (scanIndex < normalizedSource.length) {
+    const spaceIndex = normalizedSource.indexOf(" ", scanIndex);
+    if (spaceIndex === -1) {
+      break;
+    }
+
+    const candidateSource = normalizedSource.slice(0, spaceIndex).trimEnd();
+    if (candidateSource.length > 0) {
+      const candidateDisplay = await translateBrailleTextLine(candidateSource, translationCache);
+      if (candidateDisplay.length <= lineWidth) {
+        bestWordSplit = {
+          splitPosition: spaceIndex + 1,
+          lineSource: candidateSource,
+          lineDisplay: candidateDisplay,
+        };
+      }
+    }
+
+    scanIndex = spaceIndex + 1;
+  }
+
+  if (bestWordSplit) {
+    const overflowSource = normalizedSource
+      .slice(bestWordSplit.splitPosition)
+      .replace(/^\s+/u, "");
+
+    return {
+      lineSource: bestWordSplit.lineSource,
+      overflowSource,
+      lineDisplay: bestWordSplit.lineDisplay,
+    };
+  }
+
+  let low = 1;
+  let high = normalizedSource.length;
+  let bestCharSplit = 1;
+  let bestCharDisplay = await translateBrailleTextLine(
+    normalizedSource.slice(0, 1),
+    translationCache,
+  );
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidateSource = normalizedSource.slice(0, mid);
+    const candidateDisplay = await translateBrailleTextLine(candidateSource, translationCache);
+
+    if (candidateDisplay.length <= lineWidth) {
+      bestCharSplit = mid;
+      bestCharDisplay = candidateDisplay;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return {
+    lineSource: normalizedSource.slice(0, bestCharSplit),
+    overflowSource: normalizedSource.slice(bestCharSplit),
+    lineDisplay: bestCharDisplay,
+  };
+}
+
+async function wrapBrailleSourceLinesByDisplayWidth(sourceLines, displayLines, startFlatIndex, lineWidth) {
+  const sourceWorking = Array.isArray(sourceLines) ? sourceLines.slice() : [];
+  const displayWorking = Array.isArray(displayLines) ? displayLines.slice() : [];
+  const translationCache = new Map();
+  let changed = false;
+  let lastAffectedIndex = Math.max(0, startFlatIndex);
+
+  while (displayWorking.length < sourceWorking.length) {
+    displayWorking.push("");
+  }
+
+  for (
+    let flatLineIndex = Math.max(0, startFlatIndex);
+    flatLineIndex < sourceWorking.length;
+    flatLineIndex += 1
+  ) {
+    const currentSourceLine = sourceWorking[flatLineIndex] ?? "";
+    const splitResult = await splitSourceLineByBrailleWidth(
+      currentSourceLine,
+      lineWidth,
+      translationCache,
+    );
+
+    if (splitResult.lineSource !== currentSourceLine) {
+      sourceWorking[flatLineIndex] = splitResult.lineSource;
+      changed = true;
+    }
+
+    if (displayWorking[flatLineIndex] !== splitResult.lineDisplay) {
+      displayWorking[flatLineIndex] = splitResult.lineDisplay;
+      changed = true;
+    }
+
+    if (splitResult.overflowSource.length === 0) {
+      continue;
+    }
+
+    if (flatLineIndex + 1 >= sourceWorking.length) {
+      sourceWorking.push("");
+      displayWorking.push("");
+      changed = true;
+    }
+
+    const nextSourceLine = sourceWorking[flatLineIndex + 1] ?? "";
+    const mergedNextSourceLine = mergeOverflowWithLine(splitResult.overflowSource, nextSourceLine);
+    if (mergedNextSourceLine !== nextSourceLine) {
+      sourceWorking[flatLineIndex + 1] = mergedNextSourceLine;
+      changed = true;
+    }
+
+    lastAffectedIndex = flatLineIndex + 1;
+  }
+
+  return {
+    sourceLines: sourceWorking,
+    displayLines: displayWorking,
+    changed,
+    lastAffectedIndex,
+  };
+}
+
+function nextLineTranslationRequestId(lineInputId) {
+  const nextRequestId = (lineTranslationRequestIds.get(lineInputId) ?? 0) + 1;
+  lineTranslationRequestIds.set(lineInputId, nextRequestId);
+  return nextRequestId;
+}
+
+async function translateLineToBrailleInPlace(lineInput, pageIndex, lineIndex, inputText) {
+  if (!(lineInput instanceof HTMLInputElement) || !state.documentConfig) {
+    return;
+  }
+
+  const requestId = nextLineTranslationRequestId(lineInput.id);
+  const startFlatIndex = getFlatLineIndex(pageIndex, lineIndex);
+  const lineWidth = state.documentConfig.charactersPerLine;
+
+  const currentDisplayLines = flattenDocumentLines();
+  const sourceLines = readSourceBufferLines(currentDisplayLines.length);
+  while (sourceLines.length <= startFlatIndex) {
+    sourceLines.push("");
+    currentDisplayLines.push("");
+  }
+
+  sourceLines[startFlatIndex] = typeof inputText === "string" ? inputText : "";
+
+  try {
+    const wrapResult = await wrapBrailleSourceLinesByDisplayWidth(
+      sourceLines,
+      currentDisplayLines,
+      startFlatIndex,
+      lineWidth,
+    );
+
+    if (lineTranslationRequestIds.get(lineInput.id) !== requestId) {
+      return;
+    }
+
+    const wrappedSourceLines = wrapResult.sourceLines;
+    const wrappedDisplayLines = wrapResult.displayLines;
+    while (
+      wrappedSourceLines.length > 1 &&
+      wrappedDisplayLines.length > 1 &&
+      wrappedSourceLines[wrappedSourceLines.length - 1] === "" &&
+      wrappedDisplayLines[wrappedDisplayLines.length - 1] === ""
+    ) {
+      wrappedSourceLines.pop();
+      wrappedDisplayLines.pop();
+    }
+
+    state.pages = buildPagesFromFlatLines(wrappedDisplayLines);
+    markDocumentChanged();
+
+    writeSourceBufferLines(wrappedSourceLines);
+    const sourceBufferSnapshot = new Map(lineSourceTextById);
+    renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+
+    const focusFlatIndex = Math.min(
+      Math.max(startFlatIndex, wrapResult.lastAffectedIndex),
+      wrappedDisplayLines.length - 1,
+    );
+    focusLineByFlatIndex(focusFlatIndex);
+    refreshActiveLineSpacePreview();
+    refreshAllActionStates();
+  } catch (error) {
+    if (lineTranslationRequestIds.get(lineInput.id) !== requestId) {
+      return;
+    }
+
+    setStatus(
+      translationStatusMessage,
+      `Traduction instantanée indisponible: ${getErrorMessage(error)}`,
+      "error",
+    );
+  }
+}
+
 function onLineInput(event) {
   if (!state.documentConfig) {
     return;
@@ -776,25 +1835,65 @@ function onLineInput(event) {
     return;
   }
 
+  updateLineInputBfuVisualState(lineInput);
+
   updateLastFocusedLinePosition(lineInput);
   const { pageIndex, lineIndex } = linePosition;
+
+  if (shouldTranslateLineToBrailleInPlace()) {
+    const previousSourceText = lineSourceTextById.get(lineInput.id) ?? "";
+    const nextSourceText = computeSourceLineTextFromInputEvent(
+      previousSourceText,
+      lineInput,
+      event,
+    );
+
+    lineSourceTextById.set(lineInput.id, nextSourceText);
+    void translateLineToBrailleInPlace(lineInput, pageIndex, lineIndex, nextSourceText);
+    return;
+  }
+
   const newValue = lineInput.value;
   if (state.pages[pageIndex][lineIndex] === newValue) {
     return;
   }
 
   state.pages[pageIndex][lineIndex] = newValue;
+  lineSourceTextById.set(lineInput.id, newValue);
   markDocumentChanged();
 
-  const counter = document.querySelector(`#${lineInput.id}-counter`);
-  if (counter) {
-    counter.textContent =
-      `${lineInput.value.length}/${state.documentConfig.charactersPerLine}`;
+  if (state.documentType === DOCUMENT_TYPE_BRAILLE) {
+    const startFlatIndex = getFlatLineIndex(pageIndex, lineIndex);
+    const wrapResult = applyDisplayWordWrapFromFlatIndex(startFlatIndex);
+    if (wrapResult.changed) {
+      const sourceBufferSnapshot = new Map(lineSourceTextById);
+      renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+      focusLineByFlatIndex(wrapResult.focusFlatIndex);
+      refreshActiveLineSpacePreview();
+      refreshAllActionStates();
+    } else {
+      updateLineCharacterCounter(lineInput);
+      updateLinePositionLabel(lineInput);
+      refreshActiveLineSpacePreview();
+    }
+  } else {
+    updateLineCharacterCounter(lineInput);
+    updateLinePositionLabel(lineInput);
+    refreshActiveLineSpacePreview();
   }
-  refreshActiveLineSpacePreview();
+
+  if (isBrailleOnlyEditorMode()) {
+    return;
+  }
 
   if (state.realtimeTranslationEnabled) {
     scheduleLiveBraillePreviewRefresh();
+  } else if (hasInlineTranslationOutput()) {
+    setStatus(
+      translationStatusMessage,
+      "Le document a changé. Utilise Ctrl/Cmd+T pour mettre à jour la traduction dans l’éditeur.",
+      "neutral",
+    );
   }
 }
 
@@ -805,19 +1904,279 @@ function onLineFocus(event) {
   }
 
   updateLastFocusedLinePosition(lineInput);
+  updateLinePositionLabel(lineInput);
+  updateLineInputBfuVisualState(lineInput);
   refreshActiveLineSpacePreview();
 }
 
-function createLineEditor(pageIndex, lineIndex, value) {
+function onLineSelectionChange(event) {
+  const lineInput = event.currentTarget;
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  updateLastFocusedLinePosition(lineInput);
+  updateLinePositionLabel(lineInput);
+  updateLineInputBfuVisualState(lineInput);
+}
+
+function onLineBlur(event) {
+  const lineInput = event.currentTarget;
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  lineInput.classList.remove("is-italic-mode");
+}
+
+function createEmptyEditorLineAtEnd() {
+  if (!state.documentConfig) {
+    return null;
+  }
+
+  const currentLines = flattenDocumentLines();
+  currentLines.push("");
+
+  const nextPages = buildPagesFromFlatLines(currentLines);
+  const sourceBufferSnapshot = isBrailleOnlyEditorMode()
+    ? new Map(lineSourceTextById)
+    : buildSourceBufferFromDisplayLines();
+
+  state.pages = nextPages;
+  if (isBrailleOnlyEditorMode()) {
+    const sourceLines = readSourceBufferLines(currentLines.length - 1);
+    sourceLines.push("");
+    const editorLinesPerPage = getEditorLinesPerPage();
+    const expectedTotalLines = nextPages.length * editorLinesPerPage;
+    while (sourceLines.length < expectedTotalLines) {
+      sourceLines.push("");
+    }
+    const paddedSourceBuffer = new Map();
+    sourceLines.forEach((lineValue, flatLineIndex) => {
+      const linePosition = getLinePositionFromFlatIndex(flatLineIndex);
+      if (!linePosition) {
+        return;
+      }
+
+      paddedSourceBuffer.set(
+        buildLineInputId(linePosition.pageIndex, linePosition.lineIndex),
+        typeof lineValue === "string" ? lineValue : "",
+      );
+    });
+    renderEditorPages({ sourceBuffer: paddedSourceBuffer });
+  } else {
+    renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+  }
+
+  markDocumentChanged();
+  refreshActiveLineSpacePreview();
+  refreshAllActionStates();
+  return currentLines.length - 1;
+}
+
+function focusLineByRelativeOffset(lineInput, offset, options = {}) {
+  const {
+    keepColumn = true,
+    createWhenMissing = false,
+    preventTrailingEmpty = false,
+  } = options;
+
+  const linePosition = getLinePositionFromInput(lineInput);
+  if (!linePosition) {
+    return false;
+  }
+
+  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  let targetFlatIndex = currentFlatIndex + offset;
+  const direction = offset >= 0 ? 1 : -1;
+
+  if (targetFlatIndex < 0) {
+    return false;
+  }
+
+  const currentLines = flattenDocumentLines();
+  const totalLines = currentLines.length;
+
+  if (targetFlatIndex >= totalLines) {
+    if (!createWhenMissing) {
+      return false;
+    }
+
+    const createdFlatIndex = createEmptyEditorLineAtEnd();
+    if (createdFlatIndex === null) {
+      return false;
+    }
+
+    targetFlatIndex = createdFlatIndex;
+  }
+
+  if (preventTrailingEmpty && direction > 0 && !createWhenMissing) {
+    const targetLineValue = currentLines[targetFlatIndex] ?? "";
+    if (isEditorLineEmpty(targetLineValue)) {
+      const hasFollowingNonEmptyLine =
+        findNextNonEmptyFlatLineIndex(currentLines, targetFlatIndex + 1, 1) !== null;
+      if (!hasFollowingNonEmptyLine) {
+        return false;
+      }
+    }
+  }
+
+  const targetLinePosition = getLinePositionFromFlatIndex(targetFlatIndex);
+  if (!targetLinePosition) {
+    return false;
+  }
+
+  const targetLineInput = document.querySelector(
+    `#${buildLineInputId(targetLinePosition.pageIndex, targetLinePosition.lineIndex)}`,
+  );
+  if (!(targetLineInput instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  const sourceSelectionStart = lineInput.selectionStart ?? lineInput.value.length;
+  targetLineInput.focus();
+  const nextCaret = keepColumn
+    ? Math.min(sourceSelectionStart, targetLineInput.value.length)
+    : targetLineInput.value.length;
+  targetLineInput.setSelectionRange(nextCaret, nextCaret);
+  updateLinePositionLabel(targetLineInput);
+  updateLineCharacterCounter(targetLineInput);
+  refreshActiveLineSpacePreview();
+  return true;
+}
+
+function splitCurrentNormalLineAtCaret(lineInput) {
+  if (!state.documentConfig || state.documentType !== DOCUMENT_TYPE_NORMAL) {
+    return false;
+  }
+
+  const linePosition = getLinePositionFromInput(lineInput);
+  if (!linePosition) {
+    return false;
+  }
+
+  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  const currentLines = flattenDocumentLines();
+  const selectionStart = lineInput.selectionStart ?? lineInput.value.length;
+  const selectionEnd = lineInput.selectionEnd ?? selectionStart;
+  const currentLineValue = lineInput.value;
+
+  if (selectionStart === selectionEnd && selectionStart >= currentLineValue.length) {
+    const nextFlatIndex = currentFlatIndex + 1;
+    if (nextFlatIndex >= currentLines.length) {
+      return false;
+    }
+
+    const nextLineValue = currentLines[nextFlatIndex] ?? "";
+    if (isEditorLineEmpty(nextLineValue)) {
+      const hasFollowingNonEmptyLine =
+        findNextNonEmptyFlatLineIndex(currentLines, nextFlatIndex + 1, 1) !== null;
+      if (!hasFollowingNonEmptyLine) {
+        return false;
+      }
+    }
+
+    focusLineByFlatIndex(nextFlatIndex, 0);
+    refreshActiveLineSpacePreview();
+    return true;
+  }
+
+  const leftPart = currentLineValue.slice(0, selectionStart);
+  const rightPart = currentLineValue.slice(selectionEnd);
+  currentLines[currentFlatIndex] = leftPart;
+  currentLines.splice(currentFlatIndex + 1, 0, rightPart);
+
+  state.pages = buildPagesFromFlatLines(currentLines);
+  markDocumentChanged();
+
+  const sourceBufferSnapshot = buildSourceBufferFromDisplayLines();
+  renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+
+  const nextNonEmptyFlatIndex = rightPart.length > 0
+    ? currentFlatIndex + 1
+    : findNextNonEmptyFlatLineIndex(currentLines, currentFlatIndex + 2, 1);
+
+  if (nextNonEmptyFlatIndex !== null) {
+    focusLineByFlatIndex(nextNonEmptyFlatIndex, 0);
+  } else {
+    focusLineByFlatIndex(currentFlatIndex, leftPart.length);
+  }
+
+  refreshActiveLineSpacePreview();
+  refreshAllActionStates();
+
+  if (state.realtimeTranslationEnabled) {
+    scheduleLiveBraillePreviewRefresh();
+  } else if (hasInlineTranslationOutput()) {
+    setStatus(
+      translationStatusMessage,
+      "Le document a changé. Utilise Ctrl/Cmd+T pour mettre à jour la traduction dans l’éditeur.",
+      "neutral",
+    );
+  }
+
+  return true;
+}
+
+function onLineNavigationKeyDown(event) {
+  const lineInput = event.currentTarget;
+  if (!isLineInput(lineInput)) {
+    return;
+  }
+
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    focusLineByRelativeOffset(lineInput, -1, {
+      keepColumn: true,
+      createWhenMissing: false,
+    });
+    return;
+  }
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    focusLineByRelativeOffset(lineInput, 1, {
+      keepColumn: true,
+      createWhenMissing: false,
+      preventTrailingEmpty: true,
+    });
+    return;
+  }
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (state.documentType === DOCUMENT_TYPE_NORMAL) {
+      splitCurrentNormalLineAtCaret(lineInput);
+      return;
+    }
+
+    focusLineByRelativeOffset(lineInput, 1, {
+      keepColumn: false,
+      createWhenMissing: false,
+      preventTrailingEmpty: true,
+    });
+  }
+}
+
+function createLineEditor(pageIndex, lineIndex, value, sourceBuffer = null) {
   const lineWrapper = document.createElement("div");
   lineWrapper.className = "line-item";
 
-  const inputId = `page-${pageIndex + 1}-line-${lineIndex + 1}`;
+  const inputId = buildLineInputId(pageIndex, lineIndex);
   const counterId = `${inputId}-counter`;
+  const labelId = `${inputId}-position`;
 
-  const label = document.createElement("label");
-  label.htmlFor = inputId;
-  label.textContent = `Page ${pageIndex + 1}, ligne ${lineIndex + 1}`;
+  const label = document.createElement("span");
+  label.id = labelId;
+  label.className = "line-position-label";
+  if (state.documentType === DOCUMENT_TYPE_NORMAL) {
+    label.hidden = true;
+  }
+  label.textContent = buildCompactLineLabel(pageIndex, lineIndex, 1);
 
   const lineInput = document.createElement("input");
   lineInput.id = inputId;
@@ -825,13 +2184,27 @@ function createLineEditor(pageIndex, lineIndex, value) {
   lineInput.type = "text";
   lineInput.autocomplete = "off";
   lineInput.spellcheck = false;
-  lineInput.maxLength = state.documentConfig.charactersPerLine;
   lineInput.value = value;
+  const fallbackSourceLine = isBrailleOnlyEditorMode() ? "" : value;
+  const sourceLine =
+    sourceBuffer instanceof Map && sourceBuffer.has(inputId)
+      ? sourceBuffer.get(inputId)
+      : fallbackSourceLine;
+  lineSourceTextById.set(inputId, typeof sourceLine === "string" ? sourceLine : fallbackSourceLine);
   lineInput.dataset.pageIndex = String(pageIndex);
   lineInput.dataset.lineIndex = String(lineIndex);
-  lineInput.setAttribute("aria-describedby", counterId);
+  if (state.documentType === DOCUMENT_TYPE_NORMAL) {
+    lineInput.removeAttribute("aria-labelledby");
+  } else {
+    lineInput.setAttribute("aria-labelledby", labelId);
+  }
+  lineInput.addEventListener("keydown", onLineNavigationKeyDown);
   lineInput.addEventListener("input", onLineInput);
   lineInput.addEventListener("focus", onLineFocus);
+  lineInput.addEventListener("keyup", onLineSelectionChange);
+  lineInput.addEventListener("click", onLineSelectionChange);
+  lineInput.addEventListener("select", onLineSelectionChange);
+  lineInput.addEventListener("blur", onLineBlur);
   lineInput.addEventListener("keydown", onBrailleLineKeyDown);
   lineInput.addEventListener("keyup", onBrailleLineKeyUp);
   lineInput.addEventListener("blur", onBrailleLineBlur);
@@ -839,20 +2212,38 @@ function createLineEditor(pageIndex, lineIndex, value) {
   const counter = document.createElement("span");
   counter.id = counterId;
   counter.className = "line-counter";
+  counter.setAttribute("aria-hidden", "true");
+  if (state.documentType === DOCUMENT_TYPE_NORMAL) {
+    counter.hidden = true;
+  }
   counter.textContent =
     `${value.length}/${state.documentConfig.charactersPerLine}`;
 
-  lineWrapper.append(label, lineInput, counter);
+  const translationLine = document.createElement("div");
+  translationLine.id = `${inputId}-translation`;
+  translationLine.className = "line-translation";
+  translationLine.hidden = true;
+  translationLine.setAttribute(
+    "aria-label",
+    `Traduction de la page ${pageIndex + 1}, ligne ${lineIndex + 1}`,
+  );
+
+  lineWrapper.append(label, lineInput, counter, translationLine);
+  updateLinePositionLabel(lineInput);
   return lineWrapper;
 }
 
-function renderEditorPages() {
+function renderEditorPages(options = {}) {
+  const { sourceBuffer = null } = options;
+
   if (!state.documentConfig) {
     editorPages.replaceChildren();
     return;
   }
 
   editorPages.replaceChildren();
+  lineTranslationRequestIds.clear();
+  lineSourceTextById.clear();
 
   state.pages.forEach((pageLines, pageIndex) => {
     const pageBlock = document.createElement("fieldset");
@@ -866,23 +2257,26 @@ function renderEditorPages() {
     linesContainer.className = "line-list";
 
     pageLines.forEach((lineValue, lineIndex) => {
-      linesContainer.append(createLineEditor(pageIndex, lineIndex, lineValue));
+      linesContainer.append(createLineEditor(pageIndex, lineIndex, lineValue, sourceBuffer));
     });
 
     pageBlock.append(linesContainer);
     editorPages.append(pageBlock);
   });
+
+  renderInlineTranslationInEditor();
 }
 
 function openDocumentEditor() {
   setWelcomePanelOpen(false);
   setNewDocumentPanelOpen(true);
   setEditorOpen(true);
+  void refreshActiveTableStyleSupport();
   updateDocumentMetadata();
   renderEditorPages();
   refreshActiveLineSpacePreview();
   refreshAllActionStates();
-  if (state.realtimeTranslationEnabled) {
+  if (state.realtimeTranslationEnabled && !isBrailleOnlyEditorMode()) {
     scheduleLiveBraillePreviewRefresh({ immediate: true });
   } else {
     clearLiveBraillePreview();
@@ -890,7 +2284,7 @@ function openDocumentEditor() {
 }
 
 function resetTranslationOutput() {
-  translatedText.value = "";
+  clearInlineTranslation();
   setStatus(translationStatusMessage, "", "neutral");
 }
 
@@ -898,13 +2292,18 @@ function closeCurrentDocument(options = {}) {
   const { preserveStatusMessage = false } = options;
   clearBrailleChordState();
   cancelLiveBraillePreviewRefresh();
+  styleSupportRequestId += 1;
+  lineTranslationRequestIds.clear();
+  lineSourceTextById.clear();
 
   state.documentConfig = null;
   state.documentMeta = null;
   state.pages = [];
+  state.documentType = DOCUMENT_TYPE_NORMAL;
   state.filePath = null;
   state.isDirty = false;
   lastFocusedLinePosition = null;
+  setSelectedDocumentTypeInForm(DOCUMENT_TYPE_NORMAL);
 
   setWelcomePanelOpen(true);
   setNewDocumentPanelOpen(false);
@@ -918,7 +2317,7 @@ function closeCurrentDocument(options = {}) {
   if (!preserveStatusMessage) {
     setStatus(
       documentStatusMessage,
-      "Document fermé. Crée ou ouvre un document .gbs pour continuer.",
+      "Document fermé. Crée ou ouvre un document .gnp/.gnb pour continuer.",
       "neutral",
     );
   }
@@ -951,7 +2350,7 @@ function countLeadingSpaces(lineValue) {
 }
 
 function findLineInputByPosition(linePosition) {
-  const selector = `#page-${linePosition.pageIndex + 1}-line-${linePosition.lineIndex + 1}`;
+  const selector = `#${buildLineInputId(linePosition.pageIndex, linePosition.lineIndex)}`;
   const lineInput = document.querySelector(selector);
   return isLineInput(lineInput) ? lineInput : null;
 }
@@ -967,6 +2366,165 @@ function resolveFormattingTargetLineInput() {
   }
 
   return findLineInputByPosition(lastFocusedLinePosition);
+}
+
+function canApplyBfuStyleActions() {
+  return (
+    state.documentConfig !== null &&
+    state.documentType === DOCUMENT_TYPE_NORMAL &&
+    !isFileBusy &&
+    !isTranslationBusy
+  );
+}
+
+function applyStyleTagToLineSelection(lineInput, openTag, closeTag) {
+  if (!isLineInput(lineInput)) {
+    return null;
+  }
+
+  const currentValue = lineInput.value;
+  const selectionStart = lineInput.selectionStart ?? currentValue.length;
+  const selectionEnd = lineInput.selectionEnd ?? selectionStart;
+  const selectedText = currentValue.slice(selectionStart, selectionEnd);
+  const beforeSelection = currentValue.slice(0, selectionStart);
+  const afterSelection = currentValue.slice(selectionEnd);
+
+  const nextValue =
+    `${beforeSelection}` +
+    `${openTag}` +
+    `${selectedText}` +
+    `${closeTag}` +
+    `${afterSelection}`;
+
+  lineInput.value = nextValue;
+  lineInput.dispatchEvent(new Event("input", { bubbles: true }));
+  lineInput.focus();
+
+  const selectionStartAfterWrap = selectionStart + openTag.length;
+  const selectionEndAfterWrap = selectionStartAfterWrap + selectedText.length;
+  lineInput.setSelectionRange(selectionStartAfterWrap, selectionEndAfterWrap);
+
+  return {
+    selectionWasEmpty: selectionStart === selectionEnd,
+  };
+}
+
+function toggleStyleTagAtLineCaret(lineInput, styleName) {
+  if (!isLineInput(lineInput)) {
+    return null;
+  }
+
+  const styleTags = BFU_STYLE_TAG_BY_NAME[styleName];
+  if (!styleTags) {
+    return null;
+  }
+
+  const currentValue = lineInput.value;
+  const { selectionStart, isEmpty } = getLineSelectionRange(lineInput);
+  if (!isEmpty) {
+    return null;
+  }
+
+  const styleIsActive = isStyleClassActiveAtTextPosition(currentValue, selectionStart, styleName);
+  const tagToInsert = styleIsActive ? styleTags.closeTag : styleTags.openTag;
+  const nextValue =
+    `${currentValue.slice(0, selectionStart)}` +
+    `${tagToInsert}` +
+    `${currentValue.slice(selectionStart)}`;
+
+  lineInput.value = nextValue;
+  lineInput.dispatchEvent(new Event("input", { bubbles: true }));
+  lineInput.focus();
+
+  const nextCaret = selectionStart + tagToInsert.length;
+  lineInput.setSelectionRange(nextCaret, nextCaret);
+  updateLineInputBfuVisualState(lineInput);
+
+  return {
+    activated: !styleIsActive,
+  };
+}
+
+function applyBfuStyleByName(styleName) {
+  if (!canApplyBfuStyleActions()) {
+    setStatus(
+      documentStatusMessage,
+      "La mise en forme BFU est disponible uniquement en document normal (.gnp).",
+      "neutral",
+    );
+    return;
+  }
+
+  const styleTags = BFU_STYLE_TAG_BY_NAME[styleName];
+  if (!styleTags) {
+    return;
+  }
+
+  if (!isStyleSupportedByCurrentTable(styleName)) {
+    setStatus(
+      documentStatusMessage,
+      `La table active ne prend pas en charge le ${styleTags.label} BFU.`,
+      "neutral",
+    );
+    return;
+  }
+
+  const targetLineInput = resolveFormattingTargetLineInput();
+  if (!targetLineInput) {
+    setStatus(
+      documentStatusMessage,
+      "Sélectionne une ligne du document avant d'appliquer une mise en forme BFU.",
+      "neutral",
+    );
+    return;
+  }
+
+  if (styleName === "italic") {
+    const { isEmpty } = getLineSelectionRange(targetLineInput);
+    if (isEmpty) {
+      const toggleResult = toggleStyleTagAtLineCaret(targetLineInput, styleName);
+      if (!toggleResult) {
+        return;
+      }
+
+      if (toggleResult.activated) {
+        setStatus(
+          documentStatusMessage,
+          "Mode italique activé. Appuie de nouveau sur Ctrl/Cmd+I pour le désactiver.",
+          "success",
+        );
+      } else {
+        setStatus(documentStatusMessage, "Mode italique désactivé.", "neutral");
+      }
+      return;
+    }
+  }
+
+  const applyResult = applyStyleTagToLineSelection(
+    targetLineInput,
+    styleTags.openTag,
+    styleTags.closeTag,
+  );
+  if (!applyResult) {
+    return;
+  }
+
+  const message = applyResult.selectionWasEmpty
+    ? `Balises ${styleTags.openTag}${styleTags.closeTag} insérées pour le ${styleTags.label} BFU.`
+    : `Mise en forme ${styleTags.label} BFU appliquée à la sélection.`;
+  setStatus(documentStatusMessage, message, "success");
+}
+
+function onApplyBoldStyle() {
+  applyBfuStyleByName("bold");
+}
+
+function onApplyItalicStyle() {
+  applyBfuStyleByName("italic");
+}
+
+function onApplyUnderlineStyle() {
+  applyBfuStyleByName("underline");
 }
 
 function getDirection() {
@@ -998,16 +2556,77 @@ function getDocumentText() {
   return documentText;
 }
 
+function hasInlineTranslationOutput() {
+  return state.inlineTranslatedLines.some((line) => typeof line === "string" && line.length > 0);
+}
+
+function renderInlineTranslationInEditor() {
+  if (!state.documentConfig) {
+    return;
+  }
+
+  const hideTranslationOutput = isBrailleOnlyEditorMode();
+
+  state.pages.forEach((pageLines, pageIndex) => {
+    pageLines.forEach((_lineValue, lineIndex) => {
+      const lineId = `page-${pageIndex + 1}-line-${lineIndex + 1}-translation`;
+      const translationElement = document.querySelector(`#${lineId}`);
+      if (!(translationElement instanceof HTMLElement)) {
+        return;
+      }
+
+      const flatLineIndex = getFlatLineIndex(pageIndex, lineIndex);
+      const translatedLine = state.inlineTranslatedLines[flatLineIndex] ?? "";
+      translationElement.textContent = hideTranslationOutput ? "" : translatedLine;
+      translationElement.hidden = hideTranslationOutput || translatedLine.length === 0;
+    });
+  });
+}
+
+function applyInlineTranslationFromText(outputText) {
+  if (!state.documentConfig) {
+    state.inlineTranslatedLines = [];
+    return;
+  }
+
+  if (isBrailleOnlyEditorMode()) {
+    clearInlineTranslation();
+    return;
+  }
+
+  const sourceLines = state.pages.flat();
+  const translatedLines =
+    typeof outputText === "string" && outputText.length > 0
+      ? outputText.split("\n")
+      : [];
+
+  state.inlineTranslatedLines = sourceLines.map((_, lineIndex) => translatedLines[lineIndex] ?? "");
+  renderInlineTranslationInEditor();
+}
+
+function clearInlineTranslation() {
+  state.inlineTranslatedLines = [];
+  renderInlineTranslationInEditor();
+}
+
 function setLiveBrailleStatus(message, variant = "neutral") {
-  liveBrailleStatus.dataset.variant = variant;
-  liveBrailleStatus.textContent = message;
+  setStatus(translationStatusMessage, message, variant);
 }
 
 function clearLiveBraillePreview() {
-  liveBraillePreview.value = "";
+  clearInlineTranslation();
+
+  if (isBrailleOnlyEditorMode()) {
+    setLiveBrailleStatus(
+      "Mode braille actif: l’éditeur affiche uniquement le braille.",
+      "neutral",
+    );
+    return;
+  }
+
   setLiveBrailleStatus(
     state.realtimeTranslationEnabled
-      ? "Aucun aperçu braille pour le moment."
+      ? "Aucune traduction affichée dans l’éditeur pour le moment."
       : "Traduction en temps réel désactivée.",
     "neutral",
   );
@@ -1019,6 +2638,11 @@ async function refreshLiveBraillePreview() {
     return;
   }
 
+  if (isBrailleOnlyEditorMode()) {
+    clearLiveBraillePreview();
+    return;
+  }
+
   if (!state.realtimeTranslationEnabled) {
     clearLiveBraillePreview();
     return;
@@ -1026,21 +2650,22 @@ async function refreshLiveBraillePreview() {
 
   const sourceText = getDocumentTextForTranslation();
   if (sourceText.length === 0) {
-    liveBraillePreview.value = "";
+    clearInlineTranslation();
     setLiveBrailleStatus(
-      "Aperçu braille en attente. Saisis du texte dans le document.",
+      "Traduction en attente. Saisis du texte dans le document.",
       "neutral",
     );
     return;
   }
 
+  const realtimeDirection = getDirection();
   const requestId = ++liveBraillePreviewRequestId;
-  setLiveBrailleStatus("Mise à jour de l’aperçu braille…", "neutral");
+  setLiveBrailleStatus("Mise à jour de la traduction dans l’éditeur…", "neutral");
 
   try {
     const response = await window.brailleApi.translate({
       table: state.documentConfig.table,
-      direction: "text-to-braille",
+      direction: realtimeDirection,
       inputText: sourceText,
     });
 
@@ -1052,22 +2677,16 @@ async function refreshLiveBraillePreview() {
       throw new Error("Le service de traduction a retourné une réponse invalide.");
     }
 
-    liveBraillePreview.value = response.outputText;
-    if (state.realtimeTranslationEnabled) {
-      translatedText.value = response.outputText;
-    }
-    setLiveBrailleStatus("Aperçu braille à jour.", "success");
+    applyInlineTranslationFromText(response.outputText);
+    setLiveBrailleStatus("Traduction de l’éditeur à jour.", "success");
   } catch (error) {
     if (requestId !== liveBraillePreviewRequestId) {
       return;
     }
 
-    liveBraillePreview.value = "";
-    if (state.realtimeTranslationEnabled) {
-      translatedText.value = "";
-    }
+    clearInlineTranslation();
     setLiveBrailleStatus(
-      `Aperçu braille indisponible: ${getErrorMessage(error)}`,
+      `Traduction intégrée indisponible: ${getErrorMessage(error)}`,
       "error",
     );
   }
@@ -1106,6 +2725,26 @@ function cancelLiveBraillePreviewRefresh() {
   liveBraillePreviewRequestId += 1;
 }
 
+function getSelectedDocumentTypeFromForm() {
+  const selectedType = document.querySelector('input[name="document-type"]:checked');
+  if (!(selectedType instanceof HTMLInputElement)) {
+    return DOCUMENT_TYPE_NORMAL;
+  }
+
+  return normalizeDocumentType(selectedType.value);
+}
+
+function setSelectedDocumentTypeInForm(documentType) {
+  const normalizedType = normalizeDocumentType(documentType);
+  documentTypeRadios.forEach((radio) => {
+    if (!(radio instanceof HTMLInputElement)) {
+      return;
+    }
+
+    radio.checked = radio.value === normalizedType;
+  });
+}
+
 function createDocumentFromForm() {
   const selectedTable = findTableByPath(tableSelect.value);
   if (!selectedTable) {
@@ -1126,6 +2765,7 @@ function createDocumentFromForm() {
   );
 
   const now = new Date().toISOString();
+  state.documentType = getSelectedDocumentTypeFromForm();
   state.documentConfig = {
     table: selectedTable.table,
     tableLabel: selectedTable.label,
@@ -1136,7 +2776,8 @@ function createDocumentFromForm() {
     createdAt: now,
     updatedAt: now,
   };
-  state.pages = [buildEmptyPage(linesPerPage)];
+  const editorLinesPerPage = getEditorLinesPerPageForType(state.documentType, linesPerPage);
+  state.pages = [buildEmptyPage(editorLinesPerPage)];
   state.filePath = null;
   state.isDirty = false;
 }
@@ -1153,7 +2794,12 @@ function openNewDocumentCreationPanel() {
     "Configure le document puis active « Créer le document ».",
     "neutral",
   );
-  tableSelect.focus();
+  const selectedTypeInput = document.querySelector('input[name="document-type"]:checked');
+  if (selectedTypeInput instanceof HTMLInputElement) {
+    selectedTypeInput.focus();
+  } else {
+    tableSelect.focus();
+  }
 }
 
 function requestNewDocumentCreation() {
@@ -1172,10 +2818,19 @@ function requestNewDocumentCreation() {
 
   try {
     createDocumentFromForm();
+    if (state.documentType === DOCUMENT_TYPE_BRAILLE) {
+      setDirection("text-to-braille");
+      setInputMode(INPUT_MODE_TEXT, { announce: false });
+      setRealtimeTranslationEnabled(true, { announce: false });
+    } else {
+      setRealtimeTranslationEnabled(true, { announce: false });
+      setDirection("text-to-braille");
+      setInputMode(INPUT_MODE_TEXT, { announce: false });
+    }
     resetTranslationOutput();
     setStatus(
       documentStatusMessage,
-      "Document créé. Pense à l’enregistrer au format .gbs.",
+      `Document créé. Pense à l’enregistrer au format ${getDocumentExtension()}.`,
       "success",
     );
     setStatus(translationStatusMessage, "Document prêt à être traduit.", "neutral");
@@ -1196,7 +2851,7 @@ function onAddPage() {
     return;
   }
 
-  state.pages.push(buildEmptyPage(state.documentConfig.linesPerPage));
+  state.pages.push(buildEmptyPage(getEditorLinesPerPage()));
   markDocumentChanged();
   renderEditorPages();
   updateDocumentMetadata();
@@ -1204,7 +2859,7 @@ function onAddPage() {
   const newPageIndex = state.pages.length - 1;
   setStatus(documentStatusMessage, `Page ${newPageIndex + 1} ajoutée.`, "success");
   focusLineInput(newPageIndex, 0);
-  if (state.realtimeTranslationEnabled) {
+  if (state.realtimeTranslationEnabled && !isBrailleOnlyEditorMode()) {
     scheduleLiveBraillePreviewRefresh({ immediate: true });
   }
 }
@@ -1273,6 +2928,35 @@ async function runFullDocumentTranslation() {
     return;
   }
 
+  if (isBrailleOnlyEditorMode()) {
+    clearInlineTranslation();
+    setStatus(
+      translationStatusMessage,
+      "Mode braille actif: conversion instantanée pendant la saisie standard.",
+      "neutral",
+    );
+    return;
+  }
+
+  const translationDirection = getDirection();
+  const shouldGenerateBrailleCompanion =
+    state.documentType === DOCUMENT_TYPE_NORMAL &&
+    translationDirection === "text-to-braille";
+  const sourceLinesSnapshot = state.pages.flat();
+
+  if (shouldGenerateBrailleCompanion && !state.filePath) {
+    const saveSucceeded = await saveDocumentWithOptions({
+      forcePrompt: true,
+      announceSuccess: false,
+      canceledMessage:
+        "Traduction annulée: enregistre d’abord le fichier .gnp pour générer son .gnb.",
+    });
+
+    if (!saveSucceeded) {
+      return;
+    }
+  }
+
   isTranslationBusy = true;
   refreshAllActionStates();
   setStatus(translationStatusMessage, "", "neutral");
@@ -1281,7 +2965,7 @@ async function runFullDocumentTranslation() {
     const inputText = getDocumentText();
     const response = await window.brailleApi.translate({
       table: state.documentConfig.table,
-      direction: getDirection(),
+      direction: translationDirection,
       inputText,
     });
 
@@ -1289,10 +2973,53 @@ async function runFullDocumentTranslation() {
       throw new Error("Le service de traduction a retourné une réponse invalide.");
     }
 
-    translatedText.value = response.outputText;
-    setStatus(translationStatusMessage, "Traduction terminée.", "success");
+    if (!shouldGenerateBrailleCompanion) {
+      applyInlineTranslationFromText(response.outputText);
+      setStatus(translationStatusMessage, "Traduction terminée.", "success");
+    } else {
+      const translatedPages = buildPagesFromTranslatedText(response.outputText);
+      let generatedFilePath = null;
+      let generationError = null;
+
+      try {
+        generatedFilePath = await generateBrailleCompanionDocument(response.outputText);
+      } catch (error) {
+        generationError = error;
+      }
+
+      switchEditorToBrailleDocument(translatedPages, {
+        sourceLines: sourceLinesSnapshot,
+        filePath: generatedFilePath,
+        markDirty: generatedFilePath === null,
+      });
+
+      if (generationError) {
+        setStatus(
+          translationStatusMessage,
+          "Traduction braille appliquée dans l’éditeur, mais l’enregistrement automatique du .gnb a échoué: " +
+            getErrorMessage(generationError),
+          "error",
+        );
+        setStatus(
+          documentStatusMessage,
+          "Éditeur basculé vers le document braille non enregistré. Enregistre en .gnb pour conserver les changements.",
+          "neutral",
+        );
+      } else {
+        setStatus(
+          translationStatusMessage,
+          `Traduction terminée. Éditeur basculé vers ${toFileName(generatedFilePath)}.`,
+          "success",
+        );
+        setStatus(
+          documentStatusMessage,
+          `Document braille actif: ${toFileName(generatedFilePath)}.`,
+          "success",
+        );
+      }
+    }
   } catch (error) {
-    translatedText.value = "";
+    clearInlineTranslation();
     setStatus(translationStatusMessage, `Erreur: ${getErrorMessage(error)}`, "error");
   } finally {
     isTranslationBusy = false;
@@ -1300,61 +3027,177 @@ async function runFullDocumentTranslation() {
   }
 }
 
+function seedLineSourceBufferFromLines(sourceLines) {
+  if (!state.documentConfig || !Array.isArray(sourceLines)) {
+    return;
+  }
+
+  lineSourceTextById.clear();
+
+  state.pages.forEach((pageLines, pageIndex) => {
+    pageLines.forEach((_lineValue, lineIndex) => {
+      const inputId = buildLineInputId(pageIndex, lineIndex);
+      const flatLineIndex = getFlatLineIndex(pageIndex, lineIndex);
+      const sourceLine = sourceLines[flatLineIndex];
+      lineSourceTextById.set(inputId, typeof sourceLine === "string" ? sourceLine : "");
+    });
+  });
+}
+
+function switchEditorToBrailleDocument(translatedPages, options = {}) {
+  const {
+    sourceLines = [],
+    filePath = null,
+    markDirty = false,
+  } = options;
+
+  if (!state.documentConfig || !Array.isArray(translatedPages)) {
+    throw new Error("Impossible de basculer vers le document braille.");
+  }
+
+  state.documentType = DOCUMENT_TYPE_BRAILLE;
+  state.pages = translatedPages.map((page) => (Array.isArray(page) ? page.slice() : []));
+  state.filePath = typeof filePath === "string" && filePath.length > 0 ? filePath : null;
+  state.isDirty = markDirty || state.filePath === null;
+  if (state.documentMeta) {
+    state.documentMeta.updatedAt = new Date().toISOString();
+  }
+
+  setSelectedDocumentTypeInForm(DOCUMENT_TYPE_BRAILLE);
+  setDirection("text-to-braille");
+  setInputMode(INPUT_MODE_TEXT, { announce: false });
+  setRealtimeTranslationEnabled(true, { announce: false });
+
+  clearInlineTranslation();
+  renderEditorPages();
+  seedLineSourceBufferFromLines(sourceLines);
+  updateDocumentMetadata();
+  refreshActiveLineSpacePreview();
+  refreshAllActionStates();
+  focusLineInput(0, 0);
+}
+
+function buildPagesFromTranslatedText(translatedTextValue) {
+  if (!state.documentConfig) {
+    throw new Error("Aucun document actif pour préparer le fichier traduit.");
+  }
+
+  const translatedLines =
+    translatedTextValue.length > 0 ? translatedTextValue.split("\n") : [""];
+  const wrapResult = wrapFlatLinesFromIndex(
+    translatedLines,
+    0,
+    state.documentConfig.charactersPerLine,
+  );
+
+  return buildPagesFromFlatLines(wrapResult.lines, state.documentConfig.linesPerPage);
+}
+
+async function generateBrailleCompanionDocument(translatedOutputText) {
+  if (!state.documentConfig || !state.filePath) {
+    throw new Error("Le document source doit être enregistré en .gnp avant génération.");
+  }
+
+  const companionPath = toCompanionBraillePath(state.filePath);
+  const companionPayload = buildDocumentPayload({
+    documentType: DOCUMENT_TYPE_BRAILLE,
+    defaultDirection: "text-to-braille",
+    inputMode: INPUT_MODE_TEXT,
+    realtimeTranslationEnabled: true,
+    pages: buildPagesFromTranslatedText(translatedOutputText),
+  });
+
+  const response = await window.brailleApi.saveDocument({
+    document: companionPayload,
+    filePath: companionPath,
+  });
+
+  if (!response || typeof response !== "object") {
+    throw new Error("La réponse de génération du fichier .gnb est invalide.");
+  }
+
+  if (response.canceled === true) {
+    throw new Error("La génération du fichier .gnb a été annulée.");
+  }
+
+  if (typeof response.filePath !== "string" || response.filePath.length === 0) {
+    throw new Error("Le chemin du fichier .gnb généré est invalide.");
+  }
+
+  return response.filePath;
+}
+
 async function onTranslate(event) {
   event.preventDefault();
   await runFullDocumentTranslation();
 }
 
-function buildGbsDocumentPayload() {
+function buildDocumentPayload(overrides = {}) {
   if (!state.documentConfig) {
     throw new Error("Aucun document actif à enregistrer.");
   }
 
   const now = new Date().toISOString();
-  const createdAt = state.documentMeta?.createdAt ?? now;
-  const updatedAt = now;
+  const createdAt =
+    typeof overrides.createdAt === "string"
+      ? overrides.createdAt
+      : state.documentMeta?.createdAt ?? now;
+  const updatedAt =
+    typeof overrides.updatedAt === "string"
+      ? overrides.updatedAt
+      : now;
+  const documentType = normalizeDocumentType(overrides.documentType ?? state.documentType);
 
   return {
     format: GBS_DOCUMENT_FORMAT,
     formatVersion: GBS_DOCUMENT_FORMAT_VERSION,
     appName: "Galarneau Braille Suite",
+    documentType,
     createdAt,
     updatedAt,
-    defaultDirection: getDirection(),
-    inputMode: state.inputMode,
-    realtimeTranslationEnabled: state.realtimeTranslationEnabled,
-    showSpaceMarkersEnabled: state.showSpaceMarkersEnabled,
+    defaultDirection: overrides.defaultDirection ?? getDirection(),
+    inputMode: normalizeInputMode(overrides.inputMode ?? state.inputMode),
+    realtimeTranslationEnabled:
+      typeof overrides.realtimeTranslationEnabled === "boolean"
+        ? overrides.realtimeTranslationEnabled
+        : state.realtimeTranslationEnabled,
+    showSpaceMarkersEnabled:
+      typeof overrides.showSpaceMarkersEnabled === "boolean"
+        ? overrides.showSpaceMarkersEnabled
+        : state.showSpaceMarkersEnabled,
     documentConfig: {
       table: state.documentConfig.table,
       tableLabel: state.documentConfig.tableLabel,
       linesPerPage: state.documentConfig.linesPerPage,
       charactersPerLine: state.documentConfig.charactersPerLine,
     },
-    pages: state.pages.map((page) => page.slice()),
+    pages: Array.isArray(overrides.pages)
+      ? overrides.pages.map((page) => (Array.isArray(page) ? page.slice() : []))
+      : state.pages.map((page) => page.slice()),
   };
 }
 
 function applyLoadedDocumentFromFile(loadedDocument, filePath) {
   if (!loadedDocument || typeof loadedDocument !== "object") {
-    throw new Error("Le document .gbs est invalide.");
+    throw new Error("Le document ouvert est invalide.");
   }
 
   if (loadedDocument.format !== GBS_DOCUMENT_FORMAT) {
-    throw new Error("Le fichier ne correspond pas au format .gbs attendu.");
+    throw new Error("Le fichier ne correspond pas au format attendu.");
   }
 
   if (loadedDocument.formatVersion !== GBS_DOCUMENT_FORMAT_VERSION) {
-    throw new Error("La version du format .gbs n'est pas supportée.");
+    throw new Error("La version du format de document n'est pas supportée.");
   }
 
   const config = loadedDocument.documentConfig;
   if (!config || typeof config !== "object") {
-    throw new Error("La configuration du document .gbs est manquante.");
+    throw new Error("La configuration du document est manquante.");
   }
 
   const selectedTable = findTableByPath(config.table);
   if (!selectedTable) {
-    throw new Error("La table braille du document .gbs n'est pas supportée.");
+    throw new Error("La table braille du document n'est pas supportée.");
   }
 
   const linesPerPage = ensureBoundedIntegerFromNumber(
@@ -1369,16 +3212,26 @@ function applyLoadedDocumentFromFile(loadedDocument, filePath) {
     1,
     120,
   );
+  const documentType = normalizeDocumentType(loadedDocument.documentType);
+  const isBrailleDocument = documentType === DOCUMENT_TYPE_BRAILLE;
 
   if (!Array.isArray(loadedDocument.pages) || loadedDocument.pages.length === 0) {
-    throw new Error("Le document .gbs ne contient aucune page.");
+    throw new Error("Le document ne contient aucune page.");
   }
 
   const normalizedPages = loadedDocument.pages.map((page, pageIndex) => {
-    if (!Array.isArray(page) || page.length !== linesPerPage) {
+    if (!Array.isArray(page)) {
+      throw new Error(`La page ${pageIndex + 1} est invalide.`);
+    }
+
+    if (isBrailleDocument && page.length !== linesPerPage) {
       throw new Error(
         `La page ${pageIndex + 1} ne respecte pas le format de ${linesPerPage} lignes.`,
       );
+    }
+
+    if (!isBrailleDocument && page.length === 0) {
+      throw new Error(`La page ${pageIndex + 1} ne contient aucune ligne.`);
     }
 
     return page.map((line, lineIndex) => {
@@ -1388,7 +3241,7 @@ function applyLoadedDocumentFromFile(loadedDocument, filePath) {
         );
       }
 
-      if (line.length > charactersPerLine) {
+      if (isBrailleDocument && line.length > charactersPerLine) {
         throw new Error(
           `La ligne ${lineIndex + 1} de la page ${pageIndex + 1} dépasse ` +
             `${charactersPerLine} caractères.`,
@@ -1430,16 +3283,32 @@ function applyLoadedDocumentFromFile(loadedDocument, filePath) {
     createdAt,
     updatedAt,
   };
-  state.pages = normalizedPages;
+  state.documentType = documentType;
+  if (isBrailleDocument) {
+    state.pages = normalizedPages;
+  } else {
+    const flattenedLines = normalizedPages.flat();
+    state.pages = buildPagesFromFlatLines(
+      flattenedLines,
+      getEditorLinesPerPageForType(DOCUMENT_TYPE_NORMAL, linesPerPage),
+    );
+  }
   state.filePath = filePath;
   state.isDirty = false;
 
+  setSelectedDocumentTypeInForm(documentType);
   tableSelect.value = selectedTable.table;
   linesPerPageInput.value = String(linesPerPage);
   charactersPerLineInput.value = String(charactersPerLine);
-  setDirection(defaultDirection);
-  setInputMode(inputMode, { announce: false });
-  setRealtimeTranslationEnabled(realtimeTranslationEnabled, { announce: false });
+  const effectiveDirection =
+    documentType === DOCUMENT_TYPE_BRAILLE ? "text-to-braille" : defaultDirection;
+  const effectiveInputMode =
+    documentType === DOCUMENT_TYPE_BRAILLE ? INPUT_MODE_TEXT : inputMode;
+  const effectiveRealtimeTranslationEnabled =
+    documentType === DOCUMENT_TYPE_BRAILLE ? true : realtimeTranslationEnabled;
+  setDirection(effectiveDirection);
+  setInputMode(effectiveInputMode, { announce: false });
+  setRealtimeTranslationEnabled(effectiveRealtimeTranslationEnabled, { announce: false });
   setShowSpaceMarkersEnabled(showSpaceMarkersEnabled, { announce: false });
 
   resetTranslationOutput();
@@ -1447,9 +3316,13 @@ function applyLoadedDocumentFromFile(loadedDocument, filePath) {
 }
 
 async function saveDocumentWithOptions(options = {}) {
-  const { forcePrompt = false } = options;
+  const {
+    forcePrompt = false,
+    announceSuccess = true,
+    canceledMessage,
+  } = options;
   if (!state.documentConfig || isFileBusy || isTranslationBusy) {
-    return;
+    return false;
   }
 
   isFileBusy = true;
@@ -1458,7 +3331,7 @@ async function saveDocumentWithOptions(options = {}) {
   try {
     assertBrailleApiAvailable();
 
-    const documentPayload = buildGbsDocumentPayload();
+    const documentPayload = buildDocumentPayload();
     const response = await window.brailleApi.saveDocument({
       document: documentPayload,
       filePath: forcePrompt ? null : state.filePath,
@@ -1471,10 +3344,10 @@ async function saveDocumentWithOptions(options = {}) {
     if (response.canceled === true) {
       setStatus(
         documentStatusMessage,
-        forcePrompt ? "Enregistrement sous annulé." : "Enregistrement annulé.",
+        canceledMessage ?? (forcePrompt ? "Enregistrement sous annulé." : "Enregistrement annulé."),
         "neutral",
       );
-      return;
+      return false;
     }
 
     if (typeof response.filePath !== "string" || response.filePath.length === 0) {
@@ -1483,18 +3356,23 @@ async function saveDocumentWithOptions(options = {}) {
 
     state.filePath = response.filePath;
     state.isDirty = false;
+    state.documentType = normalizeDocumentType(documentPayload.documentType);
     if (state.documentMeta) {
       state.documentMeta.updatedAt = documentPayload.updatedAt;
     }
 
     updateDocumentMetadata();
-    setStatus(
-      documentStatusMessage,
-      `Document enregistré: ${toFileName(state.filePath)}.`,
-      "success",
-    );
+    if (announceSuccess) {
+      setStatus(
+        documentStatusMessage,
+        `Document enregistré: ${toFileName(state.filePath)}.`,
+        "success",
+      );
+    }
+    return true;
   } catch (error) {
     setStatus(documentStatusMessage, `Erreur: ${getErrorMessage(error)}`, "error");
+    return false;
   } finally {
     isFileBusy = false;
     refreshAllActionStates();
@@ -1618,11 +3496,31 @@ function onGlobalKeyDown(event) {
     return;
   }
 
-  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) {
     return;
   }
 
-  if (event.key.toLowerCase() !== "t") {
+  const normalizedKey = event.key.toLowerCase();
+
+  if (!event.shiftKey && normalizedKey === "b") {
+    event.preventDefault();
+    onApplyBoldStyle();
+    return;
+  }
+
+  if (!event.shiftKey && normalizedKey === "i") {
+    event.preventDefault();
+    onApplyItalicStyle();
+    return;
+  }
+
+  if (!event.shiftKey && normalizedKey === "u") {
+    event.preventDefault();
+    onApplyUnderlineStyle();
+    return;
+  }
+
+  if (event.shiftKey || normalizedKey !== "t") {
     return;
   }
 
@@ -1669,6 +3567,21 @@ function onMenuActionRequest(payload) {
     return;
   }
 
+  if (payload.action === "apply-bold-style") {
+    onApplyBoldStyle();
+    return;
+  }
+
+  if (payload.action === "apply-italic-style") {
+    onApplyItalicStyle();
+    return;
+  }
+
+  if (payload.action === "apply-underline-style" || payload.action === "apply-highlight-style") {
+    onApplyUnderlineStyle();
+    return;
+  }
+
   if (payload.action === "set-realtime-translation") {
     if (typeof payload.enabled !== "boolean") {
       return;
@@ -1687,20 +3600,15 @@ async function bootstrap() {
   setWelcomePanelOpen(true);
   setNewDocumentPanelOpen(false);
   setEditorOpen(false);
+  state.documentType = DOCUMENT_TYPE_NORMAL;
+  setSelectedDocumentTypeInForm(DOCUMENT_TYPE_NORMAL);
   if (startupNormalText) {
     startupNormalText.textContent = STARTUP_TEXT_MESSAGE;
-  }
-  if (startupOriginText) {
-    startupOriginText.textContent = STARTUP_ORIGIN_TEXT_MESSAGE;
   }
   if (startupBrailleOutput instanceof HTMLTextAreaElement) {
     startupBrailleOutput.value = "";
   }
-  if (startupOriginBrailleOutput instanceof HTMLTextAreaElement) {
-    startupOriginBrailleOutput.value = "";
-  }
   setStartupBrailleStatus("Préparation de la traduction braille d’accueil…", "neutral");
-  setStartupOriginBrailleStatus("Préparation de la traduction braille de l’origine du nom…", "neutral");
   setInputMode(INPUT_MODE_TEXT, { announce: false });
   setRealtimeTranslationEnabled(
     realtimeTranslationToggle instanceof HTMLInputElement
@@ -1742,6 +3650,15 @@ newDocumentForm.addEventListener("submit", onCreateDocument);
 openDocumentButton.addEventListener("click", onOpenDocument);
 addPageButton.addEventListener("click", onAddPage);
 centerActiveLineButton.addEventListener("click", onCenterActiveLine);
+if (applyBoldStyleButton instanceof HTMLButtonElement) {
+  applyBoldStyleButton.addEventListener("click", onApplyBoldStyle);
+}
+if (applyItalicStyleButton instanceof HTMLButtonElement) {
+  applyItalicStyleButton.addEventListener("click", onApplyItalicStyle);
+}
+if (applyUnderlineStyleButton instanceof HTMLButtonElement) {
+  applyUnderlineStyleButton.addEventListener("click", onApplyUnderlineStyle);
+}
 saveDocumentButton.addEventListener("click", onSaveDocument);
 closeDocumentButton.addEventListener("click", onCloseDocumentRequest);
 translationForm.addEventListener("submit", onTranslate);

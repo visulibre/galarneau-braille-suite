@@ -87,16 +87,41 @@ npm run dist
 
 Les artefacts sont générés dans le dossier `dist/`.
 
+### Exécuter l’AppImage sous Linux
+
+Rendre d’abord le fichier exécutable, puis lancer l’application :
+
+```bash
+chmod +x "dist/Galarneau Braille Suite-1.0.0-x86_64.AppImage"
+"./dist/Galarneau Braille Suite-1.0.0-x86_64.AppImage"
+```
+
+Si tu obtiens l’erreur `dlopen(): error loading libfuse.so.2`, installe FUSE 2
+selon ta distribution, puis relance :
+
+- Debian/Ubuntu : `sudo apt install libfuse2` (ou `libfuse2t64` selon la version)
+- Fedora : `sudo dnf install fuse fuse-libs`
+- Arch : `sudo pacman -S fuse2`
+
+Alternative sans installer FUSE (plus lente au démarrage) :
+
+```bash
+"./dist/Galarneau Braille Suite-1.0.0-x86_64.AppImage" --appimage-extract-and-run
+```
+
+Le binaire non empaqueté est aussi disponible ici :
+`dist/linux-unpacked/galarneau-braille-suite`
+
 ## Utilisation
 
 1. Au démarrage, l’écran affiche un **espace vide** avec :
    - le texte normal `galarneau braille suite version 1.0 en la mémoire de Roland Galarneau.` ;
    - sa traduction braille en français via la table `fr-bfu-g2` ;
-   - un texte expliquant l’origine du nom, et sa version braille (table `fr-bfu-g2`) ;
    - le focus clavier sur la zone de traduction braille.
    - ce numéro de version est à mettre à jour lors d’une évolution importante.
 2. Utiliser `Ctrl/Cmd + N` pour afficher la section **Créer un nouveau document**.
 3. Dans **Créer un nouveau document**, choisir :
+   - le type de document : normal (`.gnp`) ou braille (`.gnb`) ;
    - la table de traduction braille ;
    - le nombre de lignes par page ;
    - le nombre de caractères par ligne.
@@ -104,19 +129,95 @@ Les artefacts sont générés dans le dossier `dist/`.
 5. L’éditeur s’ouvre uniquement après création du document.
 6. Saisir le contenu dans les lignes de l’éditeur (et ajouter des pages si
    nécessaire).
+   En document normal (`.gnp`), l’éditeur reste large pour écrire librement
+   (les paramètres lignes/page et caractères/ligne ne limitent pas cette saisie).
+   En document braille (`.gnb`), chaque ligne affiche un repère compact à
+   gauche au format `l#p#c#`, où `c` suit la position réelle du curseur dans le
+   contenu affiché.
+   En document braille, si un mot dépasse la longueur disponible, il est
+   automatiquement renvoyé à la ligne suivante. Quand la dernière ligne d’une
+   page déborde, une nouvelle page est créée automatiquement.
 7. Pour centrer un titre, place le curseur sur sa ligne puis utilise
    **Centrer la ligne active**.
    Après centrage, le curseur revient au début de la ligne pour permettre de
    vérifier immédiatement les espaces de tête (utile avec un afficheur braille).
 8. Si besoin, active **Afficher les espaces avec des points (·)** pour voir
    clairement les espaces dans la ligne active sans modifier le texte.
-9. Enregistrer le document avec **Enregistrer le document .gbs**.
-10. Choisir le sens de traduction (texte → braille ou braille → texte).
-11. Activer ou désactiver la **traduction en temps réel** selon ton besoin :
+9. Enregistrer le document avec **Enregistrer le document**.
+   - document normal : extension `.gnp`
+   - document braille : extension `.gnb`
+10. En document normal (`.gnp`), choisir le sens de traduction (texte → braille ou braille → texte).
+11. En document normal (`.gnp`), activer ou désactiver la **traduction en temps réel** selon ton besoin :
    - activée : conversion instantanée vers le braille pendant la saisie ;
    - désactivée : traduction ponctuelle via bouton ou raccourci clavier.
-12. Consulter l’**aperçu braille en direct** pendant la saisie.
-13. Cliquer sur **Traduire le document** (ou utiliser `Ctrl/Cmd + T`).
+12. En document normal (`.gnp`), consulter la traduction affichée **sous chaque ligne de l’éditeur** pendant la saisie.
+13. En document braille (`.gnb`), tu peux saisir au clavier standard et chaque ligne est convertie en braille à mesure de la frappe (sans panneau de traduction séparé).
+   Le repère `l#p#c#` s’ajuste aussi après abrègement (ex.: si la ligne affichée
+   devient plus courte après conversion, `c` suit cette nouvelle longueur).
+   Pour obtenir l’abrègement des mots, utilise une table abrégée (ex. `fr-bfu-g2`).
+   Selon la règle liblouis, certaines contractions se stabilisent au plus tard
+   quand tu appuies sur l’espace.
+   La coupure automatique des mots se fait selon la longueur braille réellement
+   affichée après traduction (et non selon la longueur du texte source tapé).
+14. Cliquer sur **Traduire le document** (ou utiliser `Ctrl/Cmd + T`) pour un document normal.
+15. Si le document actif est un `.gnp` et que la traduction va vers le braille :
+   - l’éditeur bascule automatiquement sur le contenu braille (le texte imprimé n’est plus la base d’édition active) ;
+   - le contenu est redimensionné selon les paramètres braille choisis (caractères/ligne et lignes/page) ;
+   - un fichier `.gnb` compagnon est généré automatiquement avec le même nom de base quand l’enregistrement est possible.
+
+### Mise en forme BFU (italique, gras, surlignage)
+
+En document normal (`.gnp`), tu peux marquer l’emphase BFU avant la traduction braille :
+
+- boutons **Gras BFU**, **Italique BFU**, **Surligner BFU** ;
+- raccourcis `Ctrl/Cmd + B`, `Ctrl/Cmd + I`, `Ctrl/Cmd + U` ;
+- balises reconnues :
+   - gras : `<b>...</b>`, `<strong>...</strong>`, `<gras>...</gras>` ;
+   - italique : `<i>...</i>`, `<em>...</em>`, `<italique>...</italique>` ;
+   - soulignement : `<u>...</u>`, `<underline>...</underline>`, `<souligne>...</souligne>`, `<surligne>...</surligne>`, `<surlignage>...</surlignage>`.
+
+Comportement du raccourci italique :
+
+- avec une sélection, `Ctrl/Cmd + I` applique les balises d’italique à la sélection ;
+- sans sélection, `Ctrl/Cmd + I` active le mode italique (insertion de `<i>`) et la même combinaison le désactive (insertion de `</i>`) ;
+- en mode document normal (`.gnp`), la ligne active prend un rendu visuel italique tant que le curseur est dans une zone italique active.
+
+Avec la table `fr-bfu-g2`, ces styles sont convertis selon les classes d’emphase
+liblouis/BFU (`italic`, `underline`, `bold`) et les indicateurs définis dans la
+table BFU française de référence :
+
+- début de mot emphase : `456` ;
+- fin de mot emphase : `6-3` ;
+- début de phrase emphase : `25-456` ;
+- fermeture de phrase emphase : `before 456` ;
+- seuil phrase emphase : `4` mots.
+
+Notes de conformité (vérifiées sur les sources officielles liblouis/BFU) :
+
+- classes déclarées : `emphclass italic`, `emphclass underline`, `emphclass bold` ;
+- indicateurs de mot : `begemphword ... 456` et `endemphword ... 6-3` ;
+- indicateurs de phrase : `begemphphrase ... 25-456`, `endemphphrase ... before 456`, `lenemphphrase ... 4` ;
+- caractères exclus de l’emphase : `noemphchars ... ,\s`.
+
+Le terme « surlignage » dans l’UI est mappé à la classe BFU `underline`
+(soulignement), car la table BFU de référence ne définit pas de classe
+d’emphase distincte nommée « surlignage ».
+
+Compatibilité moteur: si la classe `underline` est déclarée par la table mais
+n’émet pas d’indicateur visible avec la version liblouis active, l’application
+applique un fallback sur la classe `italic` pour conserver un marquage BFU
+explicite du texte souligné/surligné.
+
+### Références de conformité BFU
+
+- Table liblouis française abrégée BFU :
+   <https://raw.githubusercontent.com/liblouis/liblouis/master/tables/fr-bfu-g2.ctb>
+- Table liblouis BFU 6 points (déclaration des classes et indicateurs d’emphase) :
+   <https://raw.githubusercontent.com/liblouis/liblouis/master/tables/fr-bfu-comp6.utb>
+- Manuel liblouis (opcodes d’emphase) :
+   <https://liblouis.io/documentation/liblouis/Emphasis-Opcodes.html>
+- Manuel liblouis (API `lou_getTypeformForEmphClass`) :
+   <https://liblouis.io/documentation/liblouis/lou_005fgetTypeformForEmphClass.html>
 
 ### Menu Fichier
 
@@ -139,16 +240,25 @@ Le menu **Traduire** (à côté de **Fichier**) contient :
 Le menu **Édition** contient aussi :
 
 - **Centrer la ligne active** (`Ctrl/Cmd + E`)
+- **Appliquer le gras BFU** (`Ctrl/Cmd + B`)
+- **Appliquer l’italique BFU** (`Ctrl/Cmd + I`)
+- **Appliquer le surlignage BFU** (`Ctrl/Cmd + U`)
 
 ### Raccourcis clavier
 
-- `Ctrl/Cmd + N` : afficher la création d’un nouveau document `.gbs`
-- `Ctrl/Cmd + O` : ouvrir un document `.gbs`
-- `Ctrl/Cmd + S` : enregistrer le document `.gbs`
-- `Ctrl/Cmd + Shift + S` : enregistrer le document `.gbs` sous…
+- `Ctrl/Cmd + N` : afficher la création d’un nouveau document `.gnp`/`.gnb`
+- `Ctrl/Cmd + O` : ouvrir un document `.gnp`/`.gnb`
+- `Ctrl/Cmd + S` : enregistrer le document actif (`.gnp` ou `.gnb`)
+- `Ctrl/Cmd + Shift + S` : enregistrer le document actif sous…
 - `Ctrl/Cmd + T` : traduire le document en une seule fois
 - `Ctrl/Cmd + Shift + T` : basculer la traduction en temps réel
 - `Ctrl/Cmd + E` : centrer la ligne active (pratique pour les titres)
+- `Ctrl/Cmd + B` : appliquer le gras BFU à la sélection de la ligne active
+- `Ctrl/Cmd + I` : appliquer l’italique BFU, ou activer/désactiver le mode italique si aucune sélection
+- `Ctrl/Cmd + U` : appliquer le surlignage BFU à la sélection de la ligne active
+- `Flèche haut` / `Flèche bas` : monter / descendre d’une ligne (les lignes vides intermédiaires sont accessibles)
+- `Entrée` en document normal (`.gnp`) : couper la ligne active à la position du curseur
+- `Entrée` en document braille (`.gnb`) : aller à la ligne suivante, sans entrer dans les lignes vides de fin de contenu
 
 ### Saisie braille au clavier (8 points)
 
@@ -156,9 +266,9 @@ Dans l’éditeur, tu peux choisir **Mode de saisie → Clavier braille 8 points
 
 Correspondance des touches :
 
-- point 1 = `S`
+- point 1 = `F`
 - point 2 = `D`
-- point 3 = `F`
+- point 3 = `S`
 - point 4 = `J`
 - point 5 = `K`
 - point 6 = `L`
@@ -171,11 +281,14 @@ l’application insère le caractère braille Unicode correspondant.
 Un repère visuel des points 1→8 est affiché dans l’éditeur et indique les
 points actifs pendant une combinaison.
 
-## Format de document `.gbs`
+## Formats de document `.gnp` et `.gnb`
 
-Les documents de Galarneau Braille Suite utilisent l’extension **`.gbs`**.
+Les documents de Galarneau Braille Suite utilisent maintenant deux extensions :
 
-Chaque fichier `.gbs` contient la configuration initiale complète du document :
+- **`.gnp`** : document normal (texte standard)
+- **`.gnb`** : document braille
+
+Chaque fichier contient la configuration initiale complète du document :
 
 - table de traduction braille ;
 - nombre de lignes par page ;
@@ -186,8 +299,12 @@ Chaque fichier `.gbs` contient la configuration initiale complète du document :
 - option d’affichage des espaces visibles (activée/désactivée) ;
 - pages et contenu ligne par ligne.
 
-Un document `.gbs` ouvert dans l’application recharge automatiquement ses
-paramètres initiaux.
+Un document `.gnp` ou `.gnb` ouvert dans l’application recharge
+automatiquement ses paramètres initiaux.
+
+Quand un document `.gnp` est traduit vers le braille via la traduction
+complète (`Ctrl/Cmd + T`), un fichier `.gnb` séparé est généré
+automatiquement avec le même nom de base.
 
 ## Accessibilité
 
@@ -199,10 +316,16 @@ L’interface est structurée pour une utilisation clavier et lecteur d’écran
 - focus initial sur la traduction braille de l’écran d’accueil ;
 - gestion de focus à la création du document (focus sur la première ligne) ;
 - lien d’évitement clavier en début de page ;
-- indication caractères saisis / caractères max par ligne ;
+- indication caractères saisis / caractères max par ligne en visuel (sans annonce
+   vocale à chaque frappe) ;
+- repère compact `l#p#c#` sur chaque ligne braille, mis à jour selon la position du curseur ;
+- repère `l#p#c#` visuel uniquement (pas d’annonce vocale à chaque caractère) ;
+- pas de libellé verbal "zone d’édition" ajouté sur chaque champ de ligne ;
 - repère visuel des points braille actifs en mode 8 points ;
-- aperçu braille en direct pendant l’édition ;
-- résultat de traduction en lecture seule avec description dédiée ;
+- traduction intégrée sous chaque ligne de l’éditeur en document normal (`.gnp`) ;
+- en document braille (`.gnb`), saisie standard possible avec conversion braille instantanée directement dans la ligne ;
+- en braille, renvoi automatique des mots à la ligne suivante et pagination
+   automatique en fin de page ;
 - support d’accessibilité rendu activé côté Electron.
 
 ## Validation multi-lecteurs d’écran
@@ -223,18 +346,27 @@ Pour chaque lecteur, vérifier les points suivants :
 6. Les annonces d’état (succès/erreur) sont vocalisées.
 7. Le bouton **Ajouter une page** ajoute bien une page et place le focus sur sa
    première ligne.
-8. Le résultat de traduction est lisible en mode lecture seule.
-9. L’ouverture / l’enregistrement d’un `.gbs` conserve bien la configuration
+8. En document normal (`.gnp`), la traduction intégrée sous chaque ligne est visible et se met à jour sans panneau séparé.
+9. L’ouverture / l’enregistrement d’un `.gnp` ou `.gnb` conserve bien la configuration
    initiale (table, lignes/page, caractères/ligne, direction).
-10. La saisie braille 8 points (`S D F J K L A ;`) fonctionne sur les lignes de
+10. La saisie braille 8 points (`F D S J K L A ;`) fonctionne sur les lignes de
    l’éditeur.
-11. L’aperçu braille en direct se met à jour pendant la saisie.
-12. Avec la traduction en temps réel désactivée, `Ctrl/Cmd+T` lance bien la
-    traduction complète.
-13. Le bouton **Centrer la ligne active** et `Ctrl/Cmd+E` centrent bien la
+11. En document normal (`.gnp`), la vue traduite en temps réel se met à jour pendant la saisie.
+12. En document braille (`.gnb`), la saisie standard est convertie en braille à mesure de la frappe.
+13. En document normal (`.gnp`), `Ctrl/Cmd+T` vers braille bascule bien l’éditeur
+   sur le document braille.
+14. Le bouton **Centrer la ligne active** et `Ctrl/Cmd+E` centrent bien la
     ligne ciblée et annoncent le statut.
-14. Avec **Afficher les espaces** activé, la zone **Repère des espaces**
+15. Avec **Afficher les espaces** activé, la zone **Repère des espaces**
     montre bien les espaces avec « · » et le nombre d’espaces en tête.
+16. En saisie continue braille (`.gnb`), vérifier qu’un mot trop long est
+   poussé automatiquement sur la ligne suivante et qu’une nouvelle page est
+   ajoutée quand la page courante est pleine.
+17. Vérifier que `Flèche haut`/`Flèche bas` déplacent bien le focus ligne par
+   ligne, y compris sur les lignes vides intermédiaires.
+18. Vérifier que `Entrée` coupe bien la ligne en document normal (`.gnp`) et
+   qu’en document braille (`.gnb`), le focus va bien vers la ligne suivante
+   sans entrer dans des lignes vides en fin de contenu.
 
 Environnements recommandés :
 

@@ -130,6 +130,21 @@ function buildApplicationMenu() {
           accelerator: "CmdOrCtrl+E",
           click: () => sendMenuActionToRenderer("center-active-line"),
         },
+        {
+          label: "Appliquer le gras BFU",
+          accelerator: "CmdOrCtrl+B",
+          click: () => sendMenuActionToRenderer("apply-bold-style"),
+        },
+        {
+          label: "Appliquer l’italique BFU",
+          accelerator: "CmdOrCtrl+I",
+          click: () => sendMenuActionToRenderer("apply-italic-style"),
+        },
+        {
+          label: "Appliquer le surlignage BFU",
+          accelerator: "CmdOrCtrl+U",
+          click: () => sendMenuActionToRenderer("apply-highlight-style"),
+        },
         { type: "separator" },
         { role: "cut" },
         { role: "copy" },
@@ -164,6 +179,9 @@ function buildApplicationMenu() {
 
 function registerIpcHandlers() {
   ipcMain.handle("braille:list-tables", () => brailleService.listTables());
+  ipcMain.handle("braille:get-style-support", (_event, payload) =>
+    brailleService.getStyleSupport(payload),
+  );
   ipcMain.handle("braille:translate", (_event, payload) => {
     const outputText = brailleService.translate(payload);
     return { outputText };

@@ -3,8 +3,15 @@ const path = require("node:path");
 const { dialog } = require("electron");
 
 const GBS_DOCUMENT_FORMAT = "galarneau-braille-suite-document";
-const GBS_DOCUMENT_FORMAT_VERSION = 1;
-const GBS_EXTENSION = ".gbs";
+const GBS_DOCUMENT_FORMAT_VERSION = 2;
+const LEGACY_GBS_DOCUMENT_FORMAT_VERSION = 1;
+const DOCUMENT_TYPE_NORMAL = "normal";
+const DOCUMENT_TYPE_BRAILLE = "braille";
+const LEGACY_GBS_EXTENSION = ".gbs";
+const DOCUMENT_EXTENSION_BY_TYPE = Object.freeze({
+  [DOCUMENT_TYPE_NORMAL]: ".gnp",
+  [DOCUMENT_TYPE_BRAILLE]: ".gnb",
+});
 const SUPPORTED_DIRECTIONS = new Set(["text-to-braille", "braille-to-text"]);
 const INPUT_MODE_TEXT = "text";
 const INPUT_MODE_BRAILLE = "braille-eight-key";
@@ -23,11 +30,11 @@ function ensureObject(value, message) {
 
 function ensureBoundedInteger(value, label, min, max) {
   if (!Number.isInteger(value)) {
-    throw new TypeError(`${label}: la valeur doit être un entier.`);
+    throw new TypeError(`${label}: la valeur doit etre un entier.`);
   }
 
   if (value < min || value > max) {
-    throw new RangeError(`${label}: la valeur doit être entre ${min} et ${max}.`);
+    throw new RangeError(`${label}: la valeur doit etre entre ${min} et ${max}.`);
   }
 }
 
@@ -37,36 +44,73 @@ function ensureString(value, message) {
   }
 }
 
-function hasGbsExtension(filePath) {
-  return path.extname(filePath).toLowerCase() === GBS_EXTENSION;
+function normalizeDocumentType(value) {
+  return value === DOCUMENT_TYPE_BRAILLE ? DOCUMENT_TYPE_BRAILLE : DOCUMENT_TYPE_NORMAL;
 }
 
-function ensureGbsExtension(filePath) {
-  if (hasGbsExtension(filePath)) {
+function getExtensionForType(documentType) {
+  return DOCUMENT_EXTENSION_BY_TYPE[normalizeDocumentType(documentType)];
+}
+
+function getFileExtension(filePath) {
+  return path.extname(filePath).toLowerCase();
+}
+
+function inferDocumentTypeFromPath(filePath) {
+  const extension = getFileExtension(filePath);
+  if (extension === DOCUMENT_EXTENSION_BY_TYPE[DOCUMENT_TYPE_BRAILLE]) {
+    return DOCUMENT_TYPE_BRAILLE;
+  }
+
+  return DOCUMENT_TYPE_NORMAL;
+}
+
+function hasSupportedDocumentExtension(filePath) {
+  const extension = getFileExtension(filePath);
+  return (
+    extension === DOCUMENT_EXTENSION_BY_TYPE[DOCUMENT_TYPE_NORMAL] ||
+    extension === DOCUMENT_EXTENSION_BY_TYPE[DOCUMENT_TYPE_BRAILLE] ||
+    extension === LEGACY_GBS_EXTENSION
+  );
+}
+
+function ensureDocumentExtension(filePath, documentType) {
+  const expectedExtension = getExtensionForType(documentType);
+  const currentExtension = getFileExtension(filePath);
+
+  if (currentExtension === expectedExtension) {
     return filePath;
   }
 
-  return `${filePath}${GBS_EXTENSION}`;
-}
-
-function normalizeDocument(documentPayload) {
-  ensureObject(documentPayload, "Le document .gbs est invalide.");
-
-  if (documentPayload.format !== GBS_DOCUMENT_FORMAT) {
-    throw new TypeError("Le format du document .gbs est invalide.");
+  if (currentExtension.length === 0) {
+    return `${filePath}${expectedExtension}`;
   }
 
-  if (documentPayload.formatVersion !== GBS_DOCUMENT_FORMAT_VERSION) {
-    throw new TypeError("La version du format .gbs n'est pas supportée.");
+  const parsedPath = path.parse(filePath);
+  return path.join(parsedPath.dir, `${parsedPath.name}${expectedExtension}`);
+}
+
+function normalizeDocument(documentPayload, options = {}) {
+  ensureObject(documentPayload, "Le document est invalide.");
+
+  if (documentPayload.format !== GBS_DOCUMENT_FORMAT) {
+    throw new TypeError("Le format du document est invalide.");
+  }
+
+  const formatVersion = documentPayload.formatVersion;
+  const isCurrentFormat = formatVersion === GBS_DOCUMENT_FORMAT_VERSION;
+  const isLegacyFormat = formatVersion === LEGACY_GBS_DOCUMENT_FORMAT_VERSION;
+  if (!isCurrentFormat && !isLegacyFormat) {
+    throw new TypeError("La version du format de document n'est pas supportee.");
   }
 
   ensureObject(
     documentPayload.documentConfig,
-    "La configuration initiale du document .gbs est invalide.",
+    "La configuration initiale du document est invalide.",
   );
 
   const table = documentPayload.documentConfig.table;
-  ensureString(table, "La table braille du document .gbs est invalide.");
+  ensureString(table, "La table braille du document est invalide.");
 
   const tableLabel =
     typeof documentPayload.documentConfig.tableLabel === "string"
@@ -76,15 +120,15 @@ function normalizeDocument(documentPayload) {
   const linesPerPage = documentPayload.documentConfig.linesPerPage;
   const charactersPerLine = documentPayload.documentConfig.charactersPerLine;
   ensureBoundedInteger(linesPerPage, "Nombre de lignes par page", 1, 60);
-  ensureBoundedInteger(charactersPerLine, "Nombre de caractères par ligne", 1, 120);
+  ensureBoundedInteger(charactersPerLine, "Nombre de caracteres par ligne", 1, 120);
 
   if (!Array.isArray(documentPayload.pages) || documentPayload.pages.length === 0) {
-    throw new TypeError("Le document .gbs doit contenir au moins une page.");
+    throw new TypeError("Le document doit contenir au moins une page.");
   }
 
   const normalizedPages = documentPayload.pages.map((page, pageIndex) => {
     if (!Array.isArray(page)) {
-      throw new TypeError(`La page ${pageIndex + 1} du document .gbs est invalide.`);
+      throw new TypeError(`La page ${pageIndex + 1} du document est invalide.`);
     }
 
     if (page.length !== linesPerPage) {
@@ -102,8 +146,8 @@ function normalizeDocument(documentPayload) {
 
       if (line.length > charactersPerLine) {
         throw new RangeError(
-          `La ligne ${lineIndex + 1} de la page ${pageIndex + 1} dépasse ` +
-            `${charactersPerLine} caractères.`,
+          `La ligne ${lineIndex + 1} de la page ${pageIndex + 1} depasse ` +
+            `${charactersPerLine} caracteres.`,
         );
       }
 
@@ -134,10 +178,16 @@ function normalizeDocument(documentPayload) {
   const realtimeTranslationEnabled = documentPayload.realtimeTranslationEnabled !== false;
   const showSpaceMarkersEnabled = documentPayload.showSpaceMarkersEnabled === true;
 
+  const fallbackDocumentType = normalizeDocumentType(options.fallbackDocumentType);
+  const documentType = isCurrentFormat
+    ? normalizeDocumentType(documentPayload.documentType)
+    : fallbackDocumentType;
+
   return {
     format: GBS_DOCUMENT_FORMAT,
     formatVersion: GBS_DOCUMENT_FORMAT_VERSION,
     appName,
+    documentType,
     createdAt,
     updatedAt,
     defaultDirection,
@@ -155,27 +205,44 @@ function normalizeDocument(documentPayload) {
 }
 
 function ensureSavePayload(payload) {
-  ensureObject(payload, "La requête d'enregistrement est invalide.");
-  ensureObject(payload.document, "Le contenu du document à enregistrer est invalide.");
+  ensureObject(payload, "La requete d'enregistrement est invalide.");
+  ensureObject(payload.document, "Le contenu du document a enregistrer est invalide.");
 
   if (payload.filePath !== undefined && payload.filePath !== null) {
     ensureString(payload.filePath, "Le chemin de fichier fourni est invalide.");
   }
 }
 
+function buildSaveDialogOptions(documentType) {
+  const normalizedType = normalizeDocumentType(documentType);
+  const isBraille = normalizedType === DOCUMENT_TYPE_BRAILLE;
+  return {
+    title: "Enregistrer le document Galarneau Braille Suite",
+    defaultPath: `document${getExtensionForType(normalizedType)}`,
+    filters: [
+      {
+        name: isBraille ? "Document braille Galarneau (.gnb)" : "Document normal Galarneau (.gnp)",
+        extensions: [isBraille ? "gnb" : "gnp"],
+      },
+    ],
+    showOverwriteConfirmation: true,
+    createDirectory: true,
+  };
+}
+
 async function saveDocument(payload, browserWindow) {
   ensureSavePayload(payload);
-  const normalizedDocument = normalizeDocument(payload.document);
+  const fallbackType =
+    payload.filePath && typeof payload.filePath === "string"
+      ? inferDocumentTypeFromPath(payload.filePath)
+      : DOCUMENT_TYPE_NORMAL;
+  const normalizedDocument = normalizeDocument(payload.document, {
+    fallbackDocumentType: fallbackType,
+  });
 
   let targetPath = payload.filePath ?? null;
   if (targetPath === null) {
-    const saveOptions = {
-      title: "Enregistrer le document Galarneau Braille Suite",
-      defaultPath: "document.gbs",
-      filters: [{ name: "Document Galarneau Braille Suite", extensions: ["gbs"] }],
-      showOverwriteConfirmation: true,
-      createDirectory: true,
-    };
+    const saveOptions = buildSaveDialogOptions(normalizedDocument.documentType);
     const dialogResult = browserWindow
       ? await dialog.showSaveDialog(browserWindow, saveOptions)
       : await dialog.showSaveDialog(saveOptions);
@@ -187,8 +254,8 @@ async function saveDocument(payload, browserWindow) {
     targetPath = dialogResult.filePath;
   }
 
-  ensureString(targetPath, "Le chemin du document .gbs est invalide.");
-  const normalizedPath = ensureGbsExtension(targetPath);
+  ensureString(targetPath, "Le chemin du document est invalide.");
+  const normalizedPath = ensureDocumentExtension(targetPath, normalizedDocument.documentType);
   const serializedDocument = `${JSON.stringify(normalizedDocument, null, 2)}\n`;
   await fs.writeFile(normalizedPath, serializedDocument, "utf8");
 
@@ -201,7 +268,11 @@ async function saveDocument(payload, browserWindow) {
 async function openDocument(browserWindow) {
   const openOptions = {
     title: "Ouvrir un document Galarneau Braille Suite",
-    filters: [{ name: "Document Galarneau Braille Suite", extensions: ["gbs"] }],
+    filters: [
+      { name: "Document normal Galarneau", extensions: ["gnp"] },
+      { name: "Document braille Galarneau", extensions: ["gnb"] },
+      { name: "Document Galarneau legacy", extensions: ["gbs"] },
+    ],
     properties: ["openFile"],
   };
   const dialogResult = browserWindow
@@ -213,10 +284,10 @@ async function openDocument(browserWindow) {
   }
 
   const selectedPath = dialogResult.filePaths[0];
-  ensureString(selectedPath, "Le chemin du fichier sélectionné est invalide.");
+  ensureString(selectedPath, "Le chemin du fichier selectionne est invalide.");
 
-  if (!hasGbsExtension(selectedPath)) {
-    throw new TypeError("Le fichier sélectionné doit avoir l'extension .gbs.");
+  if (!hasSupportedDocumentExtension(selectedPath)) {
+    throw new TypeError("Le fichier selectionne doit etre un .gnp, .gnb ou .gbs.");
   }
 
   const content = await fs.readFile(selectedPath, "utf8");
@@ -226,10 +297,23 @@ async function openDocument(browserWindow) {
     parsedDocument = JSON.parse(content);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Le document .gbs est illisible: ${reason}`);
+    throw new Error(`Le document est illisible: ${reason}`);
   }
 
-  const normalizedDocument = normalizeDocument(parsedDocument);
+  const inferredDocumentType = inferDocumentTypeFromPath(selectedPath);
+  const normalizedDocument = normalizeDocument(parsedDocument, {
+    fallbackDocumentType: inferredDocumentType,
+  });
+  const selectedExtension = getFileExtension(selectedPath);
+  if (selectedExtension !== LEGACY_GBS_EXTENSION) {
+    const expectedExtension = getExtensionForType(normalizedDocument.documentType);
+    if (selectedExtension !== expectedExtension) {
+      throw new TypeError(
+        `Le type du document ne correspond pas a l'extension attendue (${expectedExtension}).`,
+      );
+    }
+  }
+
   return {
     canceled: false,
     filePath: selectedPath,
