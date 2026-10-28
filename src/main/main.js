@@ -190,9 +190,9 @@ function registerIpcHandlers() {
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
     return gbsDocumentService.saveDocument(payload, browserWindow ?? undefined);
   });
-  ipcMain.handle("gbs:open-document", async (event) => {
+  ipcMain.handle("gbs:open-document", async (event, payload) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
-    return gbsDocumentService.openDocument(browserWindow ?? undefined);
+    return gbsDocumentService.openDocument(payload, browserWindow ?? undefined);
   });
   ipcMain.handle("app:set-realtime-translation-menu-state", (_event, payload) => {
     if (typeof payload !== "boolean") {

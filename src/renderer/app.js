@@ -2128,6 +2128,27 @@ function onLineNavigationKeyDown(event) {
     return;
   }
 
+  if (
+    event.key === "ArrowLeft" ||
+    event.key === "ArrowRight" ||
+    event.key === "Home" ||
+    event.key === "End"
+  ) {
+    // Let the browser move the caret first, then refresh the compact l#p#c# marker.
+    window.requestAnimationFrame(() => {
+      if (document.activeElement !== lineInput) {
+        return;
+      }
+
+      updateLastFocusedLinePosition(lineInput);
+      updateLinePositionLabel(lineInput);
+      updateLineCharacterCounter(lineInput);
+      updateLineInputBfuVisualState(lineInput);
+      refreshActiveLineSpacePreview();
+    });
+    return;
+  }
+
   if (event.key === "ArrowUp") {
     event.preventDefault();
     focusLineByRelativeOffset(lineInput, -1, {
@@ -3387,6 +3408,38 @@ async function onSaveDocumentAs() {
   await saveDocumentWithOptions({ forcePrompt: true });
 }
 
+function coerceBoundedInteger(value, fallbackValue, min, max) {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    return fallbackValue;
+  }
+
+  return value;
+}
+
+function buildOpenDocumentRequestPayload() {
+  const selectedTableFromState = state.documentConfig
+    ? findTableByPath(state.documentConfig.table)
+    : null;
+  const selectedTableFromForm = findTableByPath(tableSelect.value);
+  const selectedTable = selectedTableFromState ?? selectedTableFromForm ?? state.tables[0] ?? null;
+
+  const linesPerPageCandidate = state.documentConfig
+    ? state.documentConfig.linesPerPage
+    : Number.parseInt(linesPerPageInput.value, 10);
+  const charactersPerLineCandidate = state.documentConfig
+    ? state.documentConfig.charactersPerLine
+    : Number.parseInt(charactersPerLineInput.value, 10);
+
+  return {
+    importOptions: {
+      table: selectedTable?.table ?? "fr-bfu-g2.ctb",
+      tableLabel: selectedTable?.label ?? "Francais BFU grade 2",
+      linesPerPage: coerceBoundedInteger(linesPerPageCandidate, 25, 1, 60),
+      charactersPerLine: coerceBoundedInteger(charactersPerLineCandidate, 40, 1, 120),
+    },
+  };
+}
+
 async function onOpenDocument() {
   if (isCreateLoading || isCreateLocked || isFileBusy || isTranslationBusy) {
     return;
@@ -3407,7 +3460,7 @@ async function onOpenDocument() {
   try {
     assertBrailleApiAvailable();
 
-    const response = await window.brailleApi.openDocument();
+    const response = await window.brailleApi.openDocument(buildOpenDocumentRequestPayload());
     if (!response || typeof response !== "object") {
       throw new Error("La réponse d'ouverture est invalide.");
     }
@@ -3425,9 +3478,13 @@ async function onOpenDocument() {
     }
 
     applyLoadedDocumentFromFile(response.document, response.filePath);
+    const openedDocumentMessage =
+      response.imported === true
+        ? `Document importe: ${toFileName(response.filePath)}.`
+        : `Document ouvert: ${toFileName(response.filePath)}.`;
     setStatus(
       documentStatusMessage,
-      `Document ouvert: ${toFileName(response.filePath)}.`,
+      openedDocumentMessage,
       "success",
     );
     setStatus(translationStatusMessage, "Document chargé. Prêt à traduire.", "neutral");

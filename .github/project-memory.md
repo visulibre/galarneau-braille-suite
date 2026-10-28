@@ -38,6 +38,16 @@
   sélection active/désactive l’italique (insertion `<i>` / `</i>`), notification
   d’état affichée, et rendu visuel italique de la ligne active lorsque le
   curseur est dans une zone italique.
+- Correctif navigation horizontale du repère compact: `c` dans `l#p#c#`
+  se met désormais à jour en continu avec `Flèche gauche/droite` (ainsi que
+  `Home`/`End`) grâce à un rafraîchissement après déplacement réel du curseur.
+- Ouverture étendue des fichiers: support natif `.gnp`/`.gnb`/`.gbs` conservé,
+  avec import texte de documents externes `.doc`, `.docx`, `.odt`, `.odf`,
+  `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown` convertis automatiquement en
+  document normal interne.
+- Passage de maintenance npm appliqué: dépendances de build migrées vers
+  `electron@^45.1.0` et `electron-builder@^26.18.0`, audit npm final à
+  `0 vulnerability`.
 
 ## Fonctions déjà en place
 
@@ -259,6 +269,23 @@
   `is-italic-mode` sur la ligne active.
   Fichiers touchés: `src/renderer/app.js`, `src/renderer/styles.css`,
   `README.md`, `.github/project-memory.md`.
+- 2026-10-28 : correction du suivi du repère `l#p#c#` pendant les déplacements
+  horizontaux au clavier (`Flèche gauche/droite`, `Home`, `End`) avec
+  rafraîchissement du marqueur après mouvement du curseur.
+  Fichier touché: `src/renderer/app.js`, `.github/project-memory.md`.
+- 2026-10-28 : ajout de l’import multi-format à l’ouverture de document
+  (`.doc`, `.docx`, `.odt`, `.odf`, `.pdf`, `.txt`, `.md`) avec extraction
+  texte par type, conversion en document interne `.gnp`, et passage des
+  options d’import (table, lignes/page, caracteres/ligne) via IPC.
+  Fichiers touchés: `src/main/gbs-document-service.js`, `src/main/main.js`,
+  `src/main/preload.js`, `src/renderer/app.js`, `src/renderer/index.html`,
+  `README.md`, `package.json`, `package-lock.json`, `.github/project-memory.md`.
+- 2026-10-28 : extension de l’import multi-format avec ajout explicite de
+  `.rtf` et `.markdown` (sélecteur de fichiers, extraction texte, documentation)
+  et passage de maintenance npm de sécurité (`npm audit fix --force`) menant à
+  `0 vulnerability`.
+  Fichiers touchés: `src/main/gbs-document-service.js`, `src/renderer/index.html`,
+  `README.md`, `package.json`, `package-lock.json`, `.github/project-memory.md`.
 
 ## Prochaine étape naturelle
 

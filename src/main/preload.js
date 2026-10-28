@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld("brailleApi", {
   getStyleSupport: (payload) => ipcRenderer.invoke("braille:get-style-support", payload),
   translate: (payload) => ipcRenderer.invoke("braille:translate", payload),
   saveDocument: (payload) => ipcRenderer.invoke("gbs:save-document", payload),
-  openDocument: () => ipcRenderer.invoke("gbs:open-document"),
+  openDocument: (payload) => ipcRenderer.invoke("gbs:open-document", payload),
   setRealtimeTranslationMenuState: (payload) =>
     ipcRenderer.invoke("app:set-realtime-translation-menu-state", payload),
   onMenuAction: (listener) => {

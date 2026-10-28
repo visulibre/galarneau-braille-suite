@@ -120,6 +120,9 @@ Le binaire non empaqueté est aussi disponible ici :
    - le focus clavier sur la zone de traduction braille.
    - ce numéro de version est à mettre à jour lors d’une évolution importante.
 2. Utiliser `Ctrl/Cmd + N` pour afficher la section **Créer un nouveau document**.
+   Tu peux aussi utiliser `Ctrl/Cmd + O` pour ouvrir un document Galarneau
+   (`.gnp`, `.gnb`, `.gbs`) ou importer un fichier externe (`.doc`, `.docx`,
+   `.odt`, `.odf`, `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown`).
 3. Dans **Créer un nouveau document**, choisir :
    - le type de document : normal (`.gnp`) ou braille (`.gnb`) ;
    - la table de traduction braille ;
@@ -228,6 +231,11 @@ Le menu **Fichier** de l’application contient :
 - **Enregistrer**
 - **Enregistrer sous…**
 
+L'action **Ouvrir…** accepte les documents natifs (`.gnp`, `.gnb`, `.gbs`) et
+importe aussi des documents externes (`.doc`, `.docx`, `.odt`, `.odf`, `.pdf`,
+`.rtf`, `.txt`, `.md`, `.markdown`) en les convertissant vers un document
+normal interne.
+
 ### Menu Traduire
 
 Le menu **Traduire** (à côté de **Fichier**) contient :
@@ -247,7 +255,7 @@ Le menu **Édition** contient aussi :
 ### Raccourcis clavier
 
 - `Ctrl/Cmd + N` : afficher la création d’un nouveau document `.gnp`/`.gnb`
-- `Ctrl/Cmd + O` : ouvrir un document `.gnp`/`.gnb`
+- `Ctrl/Cmd + O` : ouvrir un document `.gnp`/`.gnb`/`.gbs` ou importer un fichier `.doc`/`.docx`/`.odt`/`.odf`/`.pdf`/`.rtf`/`.txt`/`.md`/`.markdown`
 - `Ctrl/Cmd + S` : enregistrer le document actif (`.gnp` ou `.gnb`)
 - `Ctrl/Cmd + Shift + S` : enregistrer le document actif sous…
 - `Ctrl/Cmd + T` : traduire le document en une seule fois

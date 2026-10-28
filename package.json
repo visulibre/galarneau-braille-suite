@@ -18,11 +18,14 @@
   ],
   "license": "GPL-2.0-only",
   "dependencies": {
-    "liblouis": "^0.4.0"
+    "jszip": "^3.10.2",
+    "liblouis": "^0.4.0",
+    "pdf-parse": "^2.4.5",
+    "word-extractor": "^1.0.4"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0"
   },
   "build": {
     "appId": "org.visulibre.galarneau-braille-suite",
