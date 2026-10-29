@@ -10,7 +10,10 @@ Créer une application desktop simple pour traduire :
 
 - du texte vers le braille ;
 - du braille vers le texte ;
-- avec les tables de traduction de **liblouis-js**.
+- avec un mode hybride:
+   - preview temps reel avec **liblouis-js** ;
+   - traduction complete avec le moteur natif Windows **liblouisutdml**
+      quand `file2brl.exe` est disponible.
 
 ## Origine du nom
 
@@ -33,7 +36,9 @@ Sources consultées :
 ## Stack technique
 
 - **Electron** pour l'application bureau ;
-- **liblouis** (bindings JavaScript) pour la traduction braille ;
+- **liblouis** (bindings JavaScript) pour le preview et la saisie instantanee ;
+- **liblouisutdml** (binaire `file2brl.exe` sous Windows) pour la traduction
+   complete en production ;
 - HTML/CSS/JS (sans framework) pour l'interface.
 
 ## Arborescence
@@ -70,6 +75,27 @@ npm install
 ```bash
 npm start
 ```
+
+## Activer le moteur natif Windows (liblouisutdml)
+
+Le preview reste en `liblouis-js` par defaut. Pour la traduction complete via
+`Ctrl/Cmd+T`, l'application tente d'utiliser `file2brl.exe` sous Windows.
+
+1. Telecharger les binaires Windows de `liblouisutdml`.
+2. Placer `file2brl.exe` dans:
+
+```text
+native/liblouisutdml/bin/file2brl.exe
+```
+
+3. Optionnel: definir des variables d'environnement si tu preferes un autre
+   emplacement:
+   - `GBS_LIBLOUISUTDML_FILE2BRL` (chemin complet vers `file2brl.exe`)
+   - `GBS_LIBLOUISUTDML_BIN` (dossier contenant `file2brl.exe`)
+   - `GBS_LIBLOUIS_TABLES_DIR` (dossier de tables liblouis avec `unicode.dis`)
+
+Si `file2brl.exe` est absent ou echoue, l'application bascule automatiquement
+sur `liblouis-js` et affiche un message d'information.
 
 ## Générer un exécutable (Electron Builder)
 

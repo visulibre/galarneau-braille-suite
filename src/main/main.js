@@ -179,13 +179,11 @@ function buildApplicationMenu() {
 
 function registerIpcHandlers() {
   ipcMain.handle("braille:list-tables", () => brailleService.listTables());
+  ipcMain.handle("braille:get-runtime-info", () => brailleService.getRuntimeInfo());
   ipcMain.handle("braille:get-style-support", (_event, payload) =>
     brailleService.getStyleSupport(payload),
   );
-  ipcMain.handle("braille:translate", (_event, payload) => {
-    const outputText = brailleService.translate(payload);
-    return { outputText };
-  });
+  ipcMain.handle("braille:translate", (_event, payload) => brailleService.translate(payload));
   ipcMain.handle("gbs:save-document", async (event, payload) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
     return gbsDocumentService.saveDocument(payload, browserWindow ?? undefined);

@@ -2,7 +2,15 @@
 
 ## État actuel
 
-- Application Electron + liblouis-js fonctionnelle.
+- Application Electron hybride fonctionnelle:
+  - preview/saisie instantanee via liblouis-js ;
+  - traduction complete en mode production via liblouisutdml natif Windows
+    (`file2brl.exe`) avec fallback automatique vers liblouis-js.
+- Runtime natif present dans le projet:
+  - `native/liblouisutdml/bin/file2brl.exe` ;
+  - DLL associees (`liblouis.dll`, `liblouisutdml.dll`) ;
+  - tables liblouis sous `native/liblouisutdml/share/liblouis/tables`
+    (incluant `unicode.dis`).
 - Version projet: `1.0.0`.
 - Workflow au démarrage:
   - écran **Espace vide** affiché ;
@@ -118,6 +126,13 @@
 
 ## Historique des dernières décisions
 
+- 2026-10-29 : stabilisation du parcours de build natif Windows via Podman
+  (poste local WSL2), extraction de l'artefact `liblouisutdml-win64.zip`,
+  puis installation du runtime natif complet dans le projet pour activer le
+  moteur de production (exe + DLL + tables).
+  Fichiers/dossiers touches: `native/liblouisutdml/bin/*`,
+  `native/liblouisutdml/share/liblouis/tables/*`,
+  `.github/project-memory.md`.
 - 2026-10-26 : ajout du menu **Traduire** (traduction du document + bascule
   temps réel en case à cocher, `Ctrl/Cmd+Shift+T`).
 - 2026-10-26 : ajout du centrage de ligne pour titres (`Ctrl/Cmd+E`) avec
@@ -286,6 +301,18 @@
   `0 vulnerability`.
   Fichiers touchés: `src/main/gbs-document-service.js`, `src/renderer/index.html`,
   `README.md`, `package.json`, `package-lock.json`, `.github/project-memory.md`.
+- 2026-10-29 : transition moteur de traduction en architecture hybride:
+  - nouveau service natif Windows `file2brl.exe` (liblouisutdml) pour la
+    traduction complete (`executionMode=production`) ;
+  - conservation explicite du preview et de la saisie instantanee en
+    `liblouis-js` (`executionMode=preview`) ;
+  - fallback automatique vers `liblouis-js` si moteur natif indisponible,
+    avec message utilisateur ;
+  - packaging Electron ajuste pour embarquer `native/**/*`.
+  Fichiers touchés: `src/main/braille-native-service.js`,
+  `src/main/braille-service.js`, `src/main/main.js`, `src/main/preload.js`,
+  `src/renderer/app.js`, `native/README.md`, `package.json`, `README.md`,
+  `.github/project-memory.md`.
 
 ## Prochaine étape naturelle
 

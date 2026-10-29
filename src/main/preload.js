@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("brailleApi", {
   listTables: () => ipcRenderer.invoke("braille:list-tables"),
+  getRuntimeInfo: () => ipcRenderer.invoke("braille:get-runtime-info"),
   getStyleSupport: (payload) => ipcRenderer.invoke("braille:get-style-support", payload),
   translate: (payload) => ipcRenderer.invoke("braille:translate", payload),
   saveDocument: (payload) => ipcRenderer.invoke("gbs:save-document", payload),

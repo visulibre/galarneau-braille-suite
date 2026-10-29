@@ -80,6 +80,7 @@ const brailleDotElements = new Map(
 
 const state = {
   tables: [],
+  runtimeInfo: null,
   documentConfig: null,
   documentMeta: null,
   pages: [],
@@ -111,6 +112,8 @@ const lineSourceTextById = new Map();
 
 const BRAILLE_PREVIEW_DEBOUNCE_MS = 80;
 const NORMAL_EDITOR_LINES_PER_PAGE = 120;
+const TRANSLATION_EXECUTION_MODE_PREVIEW = "preview";
+const TRANSLATION_EXECUTION_MODE_PRODUCTION = "production";
 const BFU_STYLE_HELP_DEFAULT_TEXT =
   "Sélectionne du texte dans la ligne active puis applique un style BFU. " +
   "Le document enregistre des balises (<b>/<gras>, <i>/<italique>, <u>/<souligne>/<surligne>/<surlignage>) " +
@@ -630,6 +633,20 @@ function assertBrailleApiAvailable() {
   }
 }
 
+async function initializeRuntimeInfo() {
+  if (typeof window.brailleApi?.getRuntimeInfo !== "function") {
+    state.runtimeInfo = null;
+    return;
+  }
+
+  try {
+    const runtimeInfo = await window.brailleApi.getRuntimeInfo();
+    state.runtimeInfo = runtimeInfo && typeof runtimeInfo === "object" ? runtimeInfo : null;
+  } catch (_error) {
+    state.runtimeInfo = null;
+  }
+}
+
 async function initializeTables() {
   assertBrailleApiAvailable();
 
@@ -679,6 +696,7 @@ async function translateTextToStartupBraille(inputText) {
   const response = await window.brailleApi.translate({
     table: startupTable.table,
     direction: "text-to-braille",
+    executionMode: TRANSLATION_EXECUTION_MODE_PREVIEW,
     inputText,
   });
 
@@ -1594,6 +1612,7 @@ async function translateBrailleTextLine(inputText, translationCache = null) {
   const response = await window.brailleApi.translate({
     table: state.documentConfig.table,
     direction: "text-to-braille",
+    executionMode: TRANSLATION_EXECUTION_MODE_PREVIEW,
     inputText: normalizedInput,
   });
 
@@ -2687,6 +2706,7 @@ async function refreshLiveBraillePreview() {
     const response = await window.brailleApi.translate({
       table: state.documentConfig.table,
       direction: realtimeDirection,
+      executionMode: TRANSLATION_EXECUTION_MODE_PREVIEW,
       inputText: sourceText,
     });
 
@@ -2987,6 +3007,11 @@ async function runFullDocumentTranslation() {
     const response = await window.brailleApi.translate({
       table: state.documentConfig.table,
       direction: translationDirection,
+      executionMode: TRANSLATION_EXECUTION_MODE_PRODUCTION,
+      nativeFormatting: {
+        linesPerPage: state.documentConfig.linesPerPage,
+        charactersPerLine: state.documentConfig.charactersPerLine,
+      },
       inputText,
     });
 
@@ -2994,9 +3019,22 @@ async function runFullDocumentTranslation() {
       throw new Error("Le service de traduction a retourné une réponse invalide.");
     }
 
+    const translationWarning =
+      typeof response.warning === "string" && response.warning.length > 0
+        ? response.warning
+        : null;
+    const usedNativeEngine = response.engine === "native-liblouisutdml";
+
     if (!shouldGenerateBrailleCompanion) {
       applyInlineTranslationFromText(response.outputText);
-      setStatus(translationStatusMessage, "Traduction terminée.", "success");
+      let translationMessage = usedNativeEngine
+        ? "Traduction terminée avec le moteur natif Windows (liblouisutdml)."
+        : "Traduction terminée.";
+      if (translationWarning) {
+        translationMessage += ` ${translationWarning}`;
+      }
+
+      setStatus(translationStatusMessage, translationMessage, "success");
     } else {
       const translatedPages = buildPagesFromTranslatedText(response.outputText);
       let generatedFilePath = null;
@@ -3015,10 +3053,16 @@ async function runFullDocumentTranslation() {
       });
 
       if (generationError) {
+        let translationMessage =
+          "Traduction braille appliquée dans l’éditeur, mais l’enregistrement automatique du .gnb a échoué: " +
+          getErrorMessage(generationError);
+        if (translationWarning) {
+          translationMessage += ` ${translationWarning}`;
+        }
+
         setStatus(
           translationStatusMessage,
-          "Traduction braille appliquée dans l’éditeur, mais l’enregistrement automatique du .gnb a échoué: " +
-            getErrorMessage(generationError),
+          translationMessage,
           "error",
         );
         setStatus(
@@ -3029,7 +3073,9 @@ async function runFullDocumentTranslation() {
       } else {
         setStatus(
           translationStatusMessage,
-          `Traduction terminée. Éditeur basculé vers ${toFileName(generatedFilePath)}.`,
+          usedNativeEngine
+            ? `Traduction terminée avec le moteur natif Windows. Éditeur basculé vers ${toFileName(generatedFilePath)}.`
+            : `Traduction terminée. Éditeur basculé vers ${toFileName(generatedFilePath)}.`,
           "success",
         );
         setStatus(
@@ -3037,6 +3083,9 @@ async function runFullDocumentTranslation() {
           `Document braille actif: ${toFileName(generatedFilePath)}.`,
           "success",
         );
+        if (translationWarning) {
+          setStatus(documentStatusMessage, translationWarning, "neutral");
+        }
       }
     }
   } catch (error) {
@@ -3685,11 +3734,16 @@ async function bootstrap() {
 
   try {
     await initializeTables();
+    await initializeRuntimeInfo();
     isCreateLocked = false;
     await renderStartupWelcomeMessage({ focusBrailleOutput: true });
+
+    const nativeEngineReady = state.runtimeInfo?.productionEngine?.available === true;
     setStatus(
       documentStatusMessage,
-      "Utilise Ctrl/Cmd+N pour afficher la création de document.",
+      nativeEngineReady
+        ? "Utilise Ctrl/Cmd+N pour afficher la création de document. Moteur natif Windows prêt pour la traduction complète."
+        : "Utilise Ctrl/Cmd+N pour afficher la création de document. Le preview fonctionne via liblouis-js; le moteur natif s'activera quand file2brl.exe sera disponible.",
       "neutral",
     );
   } catch (error) {

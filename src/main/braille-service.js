@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const liblouis = require("liblouis");
+const nativeBrailleService = require("./braille-native-service");
 
 const BRAILLE_TABLES = Object.freeze([
   {
@@ -27,6 +28,8 @@ const BRAILLE_TABLES = Object.freeze([
 
 const SUPPORTED_DIRECTIONS = Object.freeze(["text-to-braille", "braille-to-text"]);
 const DEFAULT_TABLE = BRAILLE_TABLES[0].table;
+const TRANSLATION_EXECUTION_MODES = Object.freeze(["preview", "production"]);
+const DEFAULT_TRANSLATION_EXECUTION_MODE = "preview";
 const INTERNAL_STYLE_FLAGS = Object.freeze({
   italic: 0x01,
   underline: 0x02,
@@ -213,6 +216,42 @@ function resolveSupportedTable(table) {
   return normalizedTable;
 }
 
+function normalizeExecutionMode(executionMode) {
+  if (executionMode === "production") {
+    return "production";
+  }
+
+  return DEFAULT_TRANSLATION_EXECUTION_MODE;
+}
+
+function ensureValidNativeFormatting(nativeFormatting) {
+  if (nativeFormatting === undefined) {
+    return;
+  }
+
+  if (!nativeFormatting || typeof nativeFormatting !== "object") {
+    throw new TypeError("Les options de formatage natif sont invalides.");
+  }
+
+  if (
+    nativeFormatting.linesPerPage !== undefined &&
+    (!Number.isInteger(nativeFormatting.linesPerPage) ||
+      nativeFormatting.linesPerPage < 1 ||
+      nativeFormatting.linesPerPage > 60)
+  ) {
+    throw new TypeError("Le nombre de lignes par page pour le moteur natif est invalide.");
+  }
+
+  if (
+    nativeFormatting.charactersPerLine !== undefined &&
+    (!Number.isInteger(nativeFormatting.charactersPerLine) ||
+      nativeFormatting.charactersPerLine < 1 ||
+      nativeFormatting.charactersPerLine > 120)
+  ) {
+    throw new TypeError("Le nombre de caracteres par ligne pour le moteur natif est invalide.");
+  }
+}
+
 function ensureValidPayload(payload) {
   if (!payload || typeof payload !== "object") {
     throw new TypeError("La requête de traduction est invalide.");
@@ -225,6 +264,15 @@ function ensureValidPayload(payload) {
   if (typeof payload.inputText !== "string") {
     throw new TypeError("Le texte d'entrée doit être une chaîne de caractères.");
   }
+
+  if (
+    payload.executionMode !== undefined &&
+    !TRANSLATION_EXECUTION_MODES.includes(payload.executionMode)
+  ) {
+    throw new TypeError("Le mode d'execution de traduction est invalide.");
+  }
+
+  ensureValidNativeFormatting(payload.nativeFormatting);
 
   resolveSupportedTable(payload.table);
 }
@@ -516,22 +564,142 @@ function translateTextToBrailleWithBfuStyles(table, inputText) {
   return translateTextToBrailleNative(table, parsedInput.plainText);
 }
 
+function hasBfuStyleMarkup(inputText) {
+  if (typeof inputText !== "string" || inputText.length === 0) {
+    return false;
+  }
+
+  return parseTextWithBfuStyleMarkers(inputText).hasBfuStyleMarkers;
+}
+
+function resolveNativeTableFile(table) {
+  const matchingTable = BRAILLE_TABLES.find((entry) => entry.table === table);
+  if (!matchingTable) {
+    return "fr-fr-g1.utb";
+  }
+
+  const tableList = matchingTable.table.split(",");
+  const lastTable = tableList[tableList.length - 1] ?? "";
+  return lastTable.trim().replace(/^tables\//u, "");
+}
+
+function resolveNativeFormatting(payload) {
+  const formatting = payload?.nativeFormatting;
+  return {
+    linesPerPage: Number.isInteger(formatting?.linesPerPage)
+      ? formatting.linesPerPage
+      : 25,
+    charactersPerLine: Number.isInteger(formatting?.charactersPerLine)
+      ? formatting.charactersPerLine
+      : 40,
+  };
+}
+
+function translateWithLiblouisJavascript(table, payload) {
+  if (payload.direction === "text-to-braille") {
+    return translateTextToBrailleWithBfuStyles(table, payload.inputText);
+  }
+
+  return liblouis.backTranslateString(table, payload.inputText);
+}
+
+function normalizeTranslationResult({ outputText, engine, executionMode, warning = null }) {
+  return {
+    outputText,
+    engine,
+    executionMode,
+    warning,
+  };
+}
+
+function translateForPreview(table, payload) {
+  const outputText = translateWithLiblouisJavascript(table, payload);
+  return normalizeTranslationResult({
+    outputText,
+    engine: "liblouis-js",
+    executionMode: "preview",
+  });
+}
+
+function translateForProduction(table, payload) {
+  if (payload.direction !== "text-to-braille") {
+    const outputText = translateWithLiblouisJavascript(table, payload);
+    return normalizeTranslationResult({
+      outputText,
+      engine: "liblouis-js-production-fallback",
+      executionMode: "production",
+      warning:
+        "Le moteur natif liblouisutdml est reserve a la traduction texte vers braille. " +
+        "La retro-traduction utilise liblouis-js.",
+    });
+  }
+
+  if (hasBfuStyleMarkup(payload.inputText)) {
+    const outputText = translateWithLiblouisJavascript(table, payload);
+    return normalizeTranslationResult({
+      outputText,
+      engine: "liblouis-js-production-fallback",
+      executionMode: "production",
+      warning:
+        "La traduction contient des marqueurs de style BFU et reste traitee par liblouis-js " +
+        "pour conserver l'emphase actuelle.",
+    });
+  }
+
+  try {
+    const nativeFormatting = resolveNativeFormatting(payload);
+    const outputText = nativeBrailleService.translateTextToBrailleWithNativeEngine({
+      inputText: payload.inputText,
+      tableFile: resolveNativeTableFile(table),
+      linesPerPage: nativeFormatting.linesPerPage,
+      charactersPerLine: nativeFormatting.charactersPerLine,
+    });
+
+    return normalizeTranslationResult({
+      outputText,
+      engine: "native-liblouisutdml",
+      executionMode: "production",
+    });
+  } catch (error) {
+    const outputText = translateWithLiblouisJavascript(table, payload);
+    const reason = error instanceof Error ? error.message : String(error);
+
+    return normalizeTranslationResult({
+      outputText,
+      engine: "liblouis-js-production-fallback",
+      executionMode: "production",
+      warning:
+        "Le moteur natif liblouisutdml n'a pas pu etre utilise. Bascule automatique vers liblouis-js. " +
+        `Detail: ${reason}`,
+    });
+  }
+}
+
 function translate(payload) {
   ensureTableLoadingReady();
   ensureValidPayload(payload);
 
   const table = resolveSupportedTable(payload.table);
-  const inputText = payload.inputText;
-  const outputText =
-    payload.direction === "text-to-braille"
-      ? translateTextToBrailleWithBfuStyles(table, inputText)
-      : liblouis.backTranslateString(table, inputText);
+  const executionMode = normalizeExecutionMode(payload.executionMode);
+  const result =
+    executionMode === "production"
+      ? translateForProduction(table, payload)
+      : translateForPreview(table, payload);
 
-  if (typeof outputText !== "string") {
+  if (typeof result.outputText !== "string") {
     throw new Error("La traduction a échoué sans message exploitable.");
   }
 
-  return outputText;
+  return result;
+}
+
+function getRuntimeInfo() {
+  ensureTableLoadingReady();
+
+  return {
+    previewEngine: "liblouis-js",
+    productionEngine: nativeBrailleService.resolveNativeRuntime(),
+  };
 }
 
 function getStyleSupport(payload = {}) {
@@ -575,5 +743,6 @@ module.exports = {
   listTables,
   translate,
   getStyleSupport,
+  getRuntimeInfo,
   DEFAULT_TABLE,
 };
