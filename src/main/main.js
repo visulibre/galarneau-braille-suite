@@ -2,6 +2,7 @@ const path = require("node:path");
 const { app, BrowserWindow, Menu, ipcMain } = require("electron");
 const brailleService = require("./braille-service");
 const brlapiLinuxService = require("./brlapi-linux-service");
+const nvdaWindowsService = require("./nvda-windows-service");
 const gbsDocumentService = require("./gbs-document-service");
 
 app.commandLine.appendSwitch("force-renderer-accessibility");
@@ -11,6 +12,52 @@ if (
   !process.env.WAYLAND_DISPLAY
 ) {
   app.commandLine.appendSwitch("disable-gpu");
+}
+
+const unsupportedBrailleDisplayService = {
+  getStatus: async () => ({
+    supported: false,
+    available: false,
+    reason: "Service d'afficheur braille externe disponible uniquement sous Linux (BRLAPI) ou Windows (NVDA).",
+    displayColumns: 0,
+    displayRows: 0,
+  }),
+  writeDisplay: async () => ({
+    supported: false,
+    available: false,
+    queued: false,
+    reason: "Service d'afficheur braille externe disponible uniquement sous Linux (BRLAPI) ou Windows (NVDA).",
+  }),
+  clearDisplay: async () => ({
+    supported: false,
+    available: false,
+    cleared: false,
+    reason: "Service d'afficheur braille externe disponible uniquement sous Linux (BRLAPI) ou Windows (NVDA).",
+  }),
+};
+
+function getActiveBrailleDisplayService() {
+  if (process.platform === "linux") {
+    return brlapiLinuxService;
+  }
+
+  if (process.platform === "win32") {
+    return nvdaWindowsService;
+  }
+
+  return unsupportedBrailleDisplayService;
+}
+
+function getBrailleDisplayMenuLabel() {
+  if (process.platform === "linux") {
+    return "Basculer l'affichage BRLAPI (Linux)";
+  }
+
+  if (process.platform === "win32") {
+    return "Basculer l'affichage NVDA (Windows)";
+  }
+
+  return "Basculer l'affichage braille externe";
 }
 
 function createMainWindow() {
@@ -147,9 +194,9 @@ function buildApplicationMenu() {
           click: () => sendMenuActionToRenderer("apply-highlight-style"),
         },
         {
-          label: "Basculer l'affichage BRLAPI Linux",
+          label: getBrailleDisplayMenuLabel(),
           accelerator: "CmdOrCtrl+Shift+B",
-          click: () => sendMenuActionToRenderer("toggle-linux-brlapi"),
+          click: () => sendMenuActionToRenderer("toggle-braille-display"),
         },
         { type: "separator" },
         { role: "cut" },
@@ -184,13 +231,25 @@ function buildApplicationMenu() {
 }
 
 function registerIpcHandlers() {
+  const brailleDisplayService = getActiveBrailleDisplayService();
+
   ipcMain.handle("braille:list-tables", () => brailleService.listTables());
   ipcMain.handle("braille:get-runtime-info", () => brailleService.getRuntimeInfo());
-  ipcMain.handle("braille:linux-brlapi-status", () => brlapiLinuxService.getStatus());
-  ipcMain.handle("braille:linux-brlapi-write", (_event, payload) =>
-    brlapiLinuxService.writeDisplay(payload),
+
+  // Generic display channels.
+  ipcMain.handle("braille:display-status", () => brailleDisplayService.getStatus());
+  ipcMain.handle("braille:display-write", (_event, payload) =>
+    brailleDisplayService.writeDisplay(payload),
   );
-  ipcMain.handle("braille:linux-brlapi-clear", () => brlapiLinuxService.clearDisplay());
+  ipcMain.handle("braille:display-clear", () => brailleDisplayService.clearDisplay());
+
+  // Legacy channels kept for compatibility with existing renderer code.
+  ipcMain.handle("braille:linux-brlapi-status", () => brailleDisplayService.getStatus());
+  ipcMain.handle("braille:linux-brlapi-write", (_event, payload) =>
+    brailleDisplayService.writeDisplay(payload),
+  );
+  ipcMain.handle("braille:linux-brlapi-clear", () => brailleDisplayService.clearDisplay());
+
   ipcMain.handle("braille:get-style-support", (_event, payload) =>
     brailleService.getStyleSupport(payload),
   );

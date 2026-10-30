@@ -91,12 +91,15 @@
 - Import enrichi de l'alignement: conservation du centrage de paragraphes
   sur `.docx`, `.odt/.odf` et `.rtf`, converti en centrage effectif des
   lignes importees selon la largeur (`charactersPerLine`) du document cible.
-- Affichage braille Linux enrichi via BRLAPI (optionnel): mode activable via
-  option dans le panneau de creation de document et via raccourci
-  `Ctrl/Cmd+Maj+B`; en document braille, la ligne active peut etre envoyee a
-  l'afficheur avec un en-tete tactile `points 1-2-3-7`, repere `p#l#c#`, puis
-  `points 4-5-6-8`, et un segment de comptage/limite des caracteres de ligne
-  (marqueur `4-5-6-8` au dernier emplacement configure).
+- Affichage braille externe enrichi (optionnel):
+  - Linux via BRLAPI ;
+  - Windows via NVDA Controller Client (`nvdaControllerClient64.dll` et
+    alias de compatibilite) ;
+  mode activable via option dans le panneau de creation de document et via
+  raccourci `Ctrl/Cmd+Maj+B`; en document braille, la ligne active peut etre
+  envoyee a l'afficheur avec un en-tete tactile `points 1-2-3-7`, repere
+  `p#l#c#`, puis `points 4-5-6-8`, et un segment de comptage/limite des
+  caracteres de ligne (marqueur `4-5-6-8` au dernier emplacement configure).
 - Passage de maintenance npm appliqué: dépendances de build migrées vers
   `electron@^45.1.0` et `electron-builder@^26.18.0`, audit npm final à
   `0 vulnerability`.
@@ -174,6 +177,18 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-10-29 : extension de la sortie afficheur braille a Windows (NVDA):
+  - ajout du service `src/main/nvda-windows-service.js` (bindings JS via
+    `koffi`) vers `nvdaControllerClient*.dll`/`nvdaclient*.dll` ;
+  - routage main/preload multi-plateforme (Linux BRLAPI / Windows NVDA) avec
+    API generique `braille:display-*` et compatibilite des anciens canaux ;
+  - renderer adapte pour activer la meme option de sortie sous Linux **et**
+    Windows, avec messages d'etat contextuels ;
+  - documentation README ajustee (prerequis NVDA Windows + details DLL).
+  Fichiers touches: `src/main/nvda-windows-service.js`, `src/main/main.js`,
+  `src/main/preload.js`, `src/renderer/app.js`, `src/renderer/index.html`,
+  `README.md`, `.github/project-memory.md`.
 
 - 2026-10-29 : finalisation de la configuration BRLAPI Linux en JavaScript
   direct:

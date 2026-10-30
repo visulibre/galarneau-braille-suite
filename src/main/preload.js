@@ -3,9 +3,13 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("brailleApi", {
   listTables: () => ipcRenderer.invoke("braille:list-tables"),
   getRuntimeInfo: () => ipcRenderer.invoke("braille:get-runtime-info"),
-  getLinuxBrlapiStatus: () => ipcRenderer.invoke("braille:linux-brlapi-status"),
-  writeLinuxBrlapiDisplay: (payload) => ipcRenderer.invoke("braille:linux-brlapi-write", payload),
-  clearLinuxBrlapiDisplay: () => ipcRenderer.invoke("braille:linux-brlapi-clear"),
+  getDisplayStatus: () => ipcRenderer.invoke("braille:display-status"),
+  writeDisplay: (payload) => ipcRenderer.invoke("braille:display-write", payload),
+  clearDisplay: () => ipcRenderer.invoke("braille:display-clear"),
+  // Legacy aliases kept for compatibility.
+  getLinuxBrlapiStatus: () => ipcRenderer.invoke("braille:display-status"),
+  writeLinuxBrlapiDisplay: (payload) => ipcRenderer.invoke("braille:display-write", payload),
+  clearLinuxBrlapiDisplay: () => ipcRenderer.invoke("braille:display-clear"),
   getStyleSupport: (payload) => ipcRenderer.invoke("braille:get-style-support", payload),
   translate: (payload) => ipcRenderer.invoke("braille:translate", payload),
   saveDocument: (payload) => ipcRenderer.invoke("gbs:save-document", payload),

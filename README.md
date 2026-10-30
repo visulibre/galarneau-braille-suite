@@ -39,8 +39,10 @@ Sources consultées :
 - **liblouis** (bindings JavaScript) pour le preview et la saisie instantanee ;
 - **liblouisutdml** (binaire `file2brl` / `file2brl.exe`) pour la traduction
    complete en production ;
-- **BRLAPI** (Linux, optionnel) via appel JavaScript direct pour envoyer un
-   repere tactile vers un afficheur braille ;
+- **Afficheur braille externe** (optionnel):
+   - Linux via **BRLAPI** ;
+   - Windows via **NVDA Controller Client** (`nvdaControllerClient64.dll` ou compatibilite `nvdaclient64.dll`) ;
+   - le tout en appel JavaScript direct ;
 - HTML/CSS/JS (sans framework) pour l'interface.
 
 ## Arborescence
@@ -52,6 +54,7 @@ Sources consultées :
 │   ├── main
 │   │   ├── braille-service.js
 │   │   ├── gbs-document-service.js
+│   │   ├── nvda-windows-service.js
 │   │   ├── main.js
 │   │   └── preload.js
 │   └── renderer
@@ -66,10 +69,16 @@ Sources consultées :
 - Node.js 20+ recommandé
 - npm 10+ recommandé
 - Linux (optionnel, pour BRLAPI): `brltty` (libbrlapi)
+- Windows (optionnel, pour NVDA): NVDA actif + DLL controller client disponible
+   (`nvdaControllerClient64.dll` prefere, compatibilite `nvdaControllerClient.dll`,
+   `nvdaclient64.dll`, `nvdaclient.dll`)
 
-Note BRLAPI Linux : la sortie vers afficheur repose sur la dépendance
-optionnelle `koffi`. Si BRLAPI est signalé indisponible dans l'application,
-vérifie que `koffi` est bien installé dans `node_modules`.
+Note afficheur braille externe : la sortie repose sur la dependance optionnelle
+`koffi`. Si le service est signale indisponible dans l'application, verifie que
+`koffi` est bien installe dans `node_modules`, puis selon l'OS:
+- Linux : verifie `brltty` / `libbrlapi`.
+- Windows : verifie que NVDA est lance et que la DLL controller client est
+   resolvable.
 
 ## Installation
 
@@ -251,9 +260,10 @@ Le binaire non empaqueté est aussi disponible ici :
    quand tu appuies sur l’espace.
    La coupure automatique des mots se fait selon la longueur braille réellement
    affichée après traduction (et non selon la longueur du texte source tapé).
-   Sous Linux, si BRLAPI est disponible, tu peux activer la sortie BRLAPI
-   depuis les options du panneau **Créer un nouveau document** ou via
-   `Ctrl/Cmd + Maj + B`. La ligne active est alors envoyée vers l’afficheur
+   Sous Linux (BRLAPI) ou Windows (NVDA), si le service d'afficheur est
+   disponible, tu peux activer la sortie depuis les options du panneau
+   **Créer un nouveau document** ou via `Ctrl/Cmd + Maj + B`. La ligne active
+   est alors envoyée vers l’afficheur
    avec un en-tête tactile: points `1-2-3-7`, repère `p#l#c#`, puis points
    `4-5-6-8`; ensuite un segment de comptage affiche la limite
    `caractères/ligne` (exemple: à 30 caractères, le marqueur points `4-5-6-8`
