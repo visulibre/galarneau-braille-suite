@@ -1,6 +1,7 @@
 const path = require("node:path");
 const { app, BrowserWindow, Menu, ipcMain } = require("electron");
 const brailleService = require("./braille-service");
+const brlapiLinuxService = require("./brlapi-linux-service");
 const gbsDocumentService = require("./gbs-document-service");
 
 app.commandLine.appendSwitch("force-renderer-accessibility");
@@ -145,6 +146,11 @@ function buildApplicationMenu() {
           accelerator: "CmdOrCtrl+U",
           click: () => sendMenuActionToRenderer("apply-highlight-style"),
         },
+        {
+          label: "Basculer l'affichage BRLAPI Linux",
+          accelerator: "CmdOrCtrl+Shift+B",
+          click: () => sendMenuActionToRenderer("toggle-linux-brlapi"),
+        },
         { type: "separator" },
         { role: "cut" },
         { role: "copy" },
@@ -180,6 +186,11 @@ function buildApplicationMenu() {
 function registerIpcHandlers() {
   ipcMain.handle("braille:list-tables", () => brailleService.listTables());
   ipcMain.handle("braille:get-runtime-info", () => brailleService.getRuntimeInfo());
+  ipcMain.handle("braille:linux-brlapi-status", () => brlapiLinuxService.getStatus());
+  ipcMain.handle("braille:linux-brlapi-write", (_event, payload) =>
+    brlapiLinuxService.writeDisplay(payload),
+  );
+  ipcMain.handle("braille:linux-brlapi-clear", () => brlapiLinuxService.clearDisplay());
   ipcMain.handle("braille:get-style-support", (_event, payload) =>
     brailleService.getStyleSupport(payload),
   );

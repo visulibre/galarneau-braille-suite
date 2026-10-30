@@ -39,6 +39,8 @@ Sources consultées :
 - **liblouis** (bindings JavaScript) pour le preview et la saisie instantanee ;
 - **liblouisutdml** (binaire `file2brl` / `file2brl.exe`) pour la traduction
    complete en production ;
+- **BRLAPI** (Linux, optionnel) via appel JavaScript direct pour envoyer un
+   repere tactile vers un afficheur braille ;
 - HTML/CSS/JS (sans framework) pour l'interface.
 
 ## Arborescence
@@ -63,6 +65,11 @@ Sources consultées :
 
 - Node.js 20+ recommandé
 - npm 10+ recommandé
+- Linux (optionnel, pour BRLAPI): `brltty` (libbrlapi)
+
+Note BRLAPI Linux : la sortie vers afficheur repose sur la dépendance
+optionnelle `koffi`. Si BRLAPI est signalé indisponible dans l'application,
+vérifie que `koffi` est bien installé dans `node_modules`.
 
 ## Installation
 
@@ -244,6 +251,13 @@ Le binaire non empaqueté est aussi disponible ici :
    quand tu appuies sur l’espace.
    La coupure automatique des mots se fait selon la longueur braille réellement
    affichée après traduction (et non selon la longueur du texte source tapé).
+   Sous Linux, si BRLAPI est disponible, tu peux activer la sortie BRLAPI
+   depuis les options du panneau **Créer un nouveau document** ou via
+   `Ctrl/Cmd + Maj + B`. La ligne active est alors envoyée vers l’afficheur
+   avec un en-tête tactile: points `1-2-3-7`, repère `p#l#c#`, puis points
+   `4-5-6-8`; ensuite un segment de comptage affiche la limite
+   `caractères/ligne` (exemple: à 30 caractères, le marqueur points `4-5-6-8`
+   est placé au 30e emplacement).
 14. Cliquer sur **Traduire le document** (ou utiliser `Ctrl/Cmd + T`) pour un document normal.
 15. Si le document actif est un `.gnp` et que la traduction va vers le braille :
    - l’éditeur bascule automatiquement sur le contenu braille (le texte imprimé n’est plus la base d’édition active) ;

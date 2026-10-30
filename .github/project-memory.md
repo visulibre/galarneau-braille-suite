@@ -91,9 +91,18 @@
 - Import enrichi de l'alignement: conservation du centrage de paragraphes
   sur `.docx`, `.odt/.odf` et `.rtf`, converti en centrage effectif des
   lignes importees selon la largeur (`charactersPerLine`) du document cible.
+- Affichage braille Linux enrichi via BRLAPI (optionnel): mode activable via
+  option dans le panneau de creation de document et via raccourci
+  `Ctrl/Cmd+Maj+B`; en document braille, la ligne active peut etre envoyee a
+  l'afficheur avec un en-tete tactile `points 1-2-3-7`, repere `p#l#c#`, puis
+  `points 4-5-6-8`, et un segment de comptage/limite des caracteres de ligne
+  (marqueur `4-5-6-8` au dernier emplacement configure).
 - Passage de maintenance npm appliqué: dépendances de build migrées vers
   `electron@^45.1.0` et `electron-builder@^26.18.0`, audit npm final à
   `0 vulnerability`.
+- Configuration npm allow-scripts validée pour les paquets à script
+  d'installation utilisés par le projet (`koffi`, `electron-winstaller`),
+  ce qui supprime les avertissements au `npm install`.
 
 ## Fonctions déjà en place
 
@@ -146,6 +155,8 @@
 
 - `src/main/main.js`: menus, actions, raccourcis.
 - `src/main/preload.js`: pont IPC sécurisé.
+- `src/main/brlapi-linux-service.js`: pont Linux vers BRLAPI en JavaScript
+  direct (koffi).
 - `src/main/braille-service.js`: traduction liblouis.
 - `src/main/gbs-document-service.js`: lecture/écriture `.gnp` / `.gnb`
   (ouverture legacy `.gbs`).
@@ -163,6 +174,31 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-10-29 : finalisation de la configuration BRLAPI Linux en JavaScript
+  direct:
+  - dépendance `koffi` confirmée et conservée en `optionalDependencies` ;
+  - service `src/main/brlapi-linux-service.js` fiabilisé avec fallback
+    d'entrée TTY (`-1` puis `0`) pour compatibilité runtime ;
+  - validation locale des appels `status` / `write` / `clear` avec succès.
+  Fichiers touchés: `src/main/brlapi-linux-service.js`, `package.json`,
+  `package-lock.json`, `.github/project-memory.md`.
+
+- 2026-10-29 : ajout d'un mode d'affichage BRLAPI Linux pour l'aperçu
+  tactile braille:
+  - IPC ajoute (`status`/`write`/`clear`) entre renderer et main process ;
+  - service Linux dedie en appel JavaScript direct vers `libbrlapi`
+    (koffi), sans script Python ;
+  - en document braille, synchro en temps reel de la ligne active vers
+    l'afficheur avec format: `dots 1237` + `p#l#c#` + `dots 4568`, puis
+    segment de comptage des caracteres/ligne avec marqueur de limite ;
+  - activation manuelle par option dediee dans le panneau Nouveau document
+    et par raccourci `Ctrl/Cmd+Maj+B` ;
+  - nettoyage de la sortie BRLAPI a la fermeture document/hors mode braille.
+  Fichiers touches: `src/main/main.js`, `src/main/preload.js`,
+  `src/main/brlapi-linux-service.js`,
+  `src/renderer/app.js`, `src/renderer/index.html`, `package.json`, `README.md`,
+  `.github/project-memory.md`.
 
 - 2026-10-30 : finalisation de l'import enrichi de styles texte pour
   documents externes:

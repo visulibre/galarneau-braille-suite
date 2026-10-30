@@ -83,6 +83,9 @@ const pageStructureSplitIntoVolumesToggle = document.querySelector(
 const pageStructurePagesPerVolumeInput = document.querySelector(
   "#page-structure-pages-per-volume",
 );
+const linuxBrlapiOptionsField = document.querySelector("#linux-brlapi-options-field");
+const linuxBrlapiEnabledToggle = document.querySelector("#linux-brlapi-enabled-toggle");
+const linuxBrlapiStatus = document.querySelector("#linux-brlapi-status");
 const createDocumentButton = document.querySelector("#create-document-button");
 const openDocumentButton = document.querySelector("#open-document-button");
 const documentStatusMessage = document.querySelector("#document-status-message");
@@ -147,6 +150,18 @@ let lastFocusedLinePosition = null;
 let styleSupportRequestId = 0;
 const lineTranslationRequestIds = new Map();
 const lineSourceTextById = new Map();
+const linuxBrlapiState = {
+  initialized: false,
+  supported: false,
+  available: false,
+  displayColumns: 0,
+  displayRows: 0,
+  reason: null,
+  unavailableNotified: false,
+};
+let linuxBrlapiEnabled = false;
+let linuxBrlapiSyncTimerId = null;
+let pendingLinuxBrlapiContext = null;
 
 const BRAILLE_PREVIEW_DEBOUNCE_MS = 80;
 const NORMAL_EDITOR_LINES_PER_PAGE = 120;
@@ -200,6 +215,9 @@ const BFU_STYLE_CLASS_BY_MARKUP_TAG = Object.freeze({
   surlignage: "underline",
   surlignement: "underline",
 });
+const LINUX_BRLAPI_MARKER_LEFT = String.fromCodePoint(0x2847); // dots 1-2-3-7
+const LINUX_BRLAPI_MARKER_RIGHT = String.fromCodePoint(0x28b8); // dots 4-5-6-8
+const LINUX_BRLAPI_SYNC_DEBOUNCE_MS = 35;
 
 function configureLiveRegion(element, variant) {
   if (!element) {
@@ -230,6 +248,306 @@ function setStatus(element, message, variant = "neutral") {
   }
 
   element.textContent = normalizedMessage;
+}
+
+function isLinuxClientPlatform() {
+  const platform = typeof navigator.platform === "string" ? navigator.platform.toLowerCase() : "";
+  if (platform.includes("linux")) {
+    return true;
+  }
+
+  const userAgent = typeof navigator.userAgent === "string" ? navigator.userAgent.toLowerCase() : "";
+  return userAgent.includes("linux");
+}
+
+function normalizeLinuxBrlapiText(inputText) {
+  return typeof inputText === "string" ? inputText.replace(/\r?\n/gu, " ") : "";
+}
+
+function buildLinuxBrlapiLimitSegment(lineText, charactersPerLine) {
+  const safeCharactersPerLine = Number.isInteger(charactersPerLine)
+    ? Math.max(1, charactersPerLine)
+    : 1;
+  const normalizedLineText = normalizeLinuxBrlapiText(lineText);
+  const lineCharacters = Array.from(normalizedLineText);
+  const visibleCharacterCount = Math.min(lineCharacters.length, Math.max(0, safeCharactersPerLine - 1));
+
+  const limitedCells = [];
+  for (let characterPosition = 1; characterPosition <= safeCharactersPerLine; characterPosition += 1) {
+    if (characterPosition === safeCharactersPerLine) {
+      limitedCells.push(LINUX_BRLAPI_MARKER_RIGHT);
+      continue;
+    }
+
+    limitedCells.push(lineCharacters[characterPosition - 1] ?? " ");
+  }
+
+  const counterLabel = `${visibleCharacterCount}/${safeCharactersPerLine}`;
+  return `${LINUX_BRLAPI_MARKER_LEFT}${counterLabel}${LINUX_BRLAPI_MARKER_RIGHT} ` +
+    `${LINUX_BRLAPI_MARKER_LEFT}${limitedCells.join("")}`;
+}
+
+function buildLinuxBrlapiDisplayText(context) {
+  if (!context || typeof context !== "object") {
+    return "";
+  }
+
+  const pageIndex = Number.isInteger(context.pageIndex) ? context.pageIndex : 0;
+  const lineIndex = Number.isInteger(context.lineIndex) ? context.lineIndex : 0;
+  const characterIndex = Number.isInteger(context.characterIndex)
+    ? Math.max(1, context.characterIndex)
+    : 1;
+  const positionLabel = `p${pageIndex + 1}l${lineIndex + 1}c${characterIndex}`;
+
+  const header = `${LINUX_BRLAPI_MARKER_LEFT}${positionLabel}${LINUX_BRLAPI_MARKER_RIGHT}`;
+  const limitSegment = buildLinuxBrlapiLimitSegment(context.lineValue, context.charactersPerLine);
+  return `${header} ${limitSegment}`;
+}
+
+function updateLinuxBrlapiAvailabilityFromResponse(response) {
+  if (!response || typeof response !== "object") {
+    refreshLinuxBrlapiOptionsUI();
+    return;
+  }
+
+  linuxBrlapiState.supported = response.supported === true;
+  linuxBrlapiState.available = response.available === true;
+  linuxBrlapiState.displayColumns = Number.isInteger(response.displayColumns)
+    ? Math.max(0, response.displayColumns)
+    : 0;
+  linuxBrlapiState.displayRows = Number.isInteger(response.displayRows)
+    ? Math.max(0, response.displayRows)
+    : 0;
+  linuxBrlapiState.reason =
+    typeof response.reason === "string" && response.reason.length > 0
+      ? response.reason
+      : null;
+
+  if (!linuxBrlapiState.available) {
+    linuxBrlapiEnabled = false;
+  }
+
+  refreshLinuxBrlapiOptionsUI();
+}
+
+function refreshLinuxBrlapiOptionsUI() {
+  const linuxClient = isLinuxClientPlatform();
+  const disableForCreationFlow = isCreateLoading || isCreateLocked || isFileBusy;
+
+  if (linuxBrlapiOptionsField instanceof HTMLElement) {
+    linuxBrlapiOptionsField.hidden = !linuxClient;
+  }
+
+  if (linuxBrlapiEnabledToggle instanceof HTMLInputElement) {
+    linuxBrlapiEnabledToggle.checked = linuxBrlapiEnabled;
+    linuxBrlapiEnabledToggle.disabled =
+      disableForCreationFlow ||
+      !linuxClient ||
+      !linuxBrlapiState.available;
+  }
+
+  if (linuxBrlapiStatus instanceof HTMLElement) {
+    if (!linuxClient) {
+      linuxBrlapiStatus.textContent = "Option disponible uniquement sous Linux.";
+      return;
+    }
+
+    if (!linuxBrlapiState.available) {
+      const reason =
+        typeof linuxBrlapiState.reason === "string" && linuxBrlapiState.reason.length > 0
+          ? linuxBrlapiState.reason
+          : "BRLAPI non disponible.";
+      linuxBrlapiStatus.textContent = `Indisponible: ${reason}`;
+      return;
+    }
+
+    linuxBrlapiStatus.textContent = linuxBrlapiEnabled
+      ? "Sortie BRLAPI active pour la ligne braille courante."
+      : "Disponible. Active BRLAPI via la case ci-dessus ou Ctrl/Cmd+Maj+B.";
+  }
+}
+
+function notifyLinuxBrlapiUnavailable() {
+  if (
+    linuxBrlapiState.unavailableNotified ||
+    linuxBrlapiState.available ||
+    !linuxBrlapiEnabled
+  ) {
+    return;
+  }
+
+  linuxBrlapiState.unavailableNotified = true;
+  const reason =
+    typeof linuxBrlapiState.reason === "string" && linuxBrlapiState.reason.length > 0
+      ? linuxBrlapiState.reason
+      : "Service BRLAPI indisponible.";
+  setStatus(translationStatusMessage, `Sortie BRLAPI Linux indisponible: ${reason}`, "neutral");
+}
+
+function setLinuxBrlapiEnabled(isEnabled, options = {}) {
+  const { announce = true } = options;
+  const nextEnabled = isEnabled === true;
+
+  if (!isLinuxClientPlatform()) {
+    linuxBrlapiEnabled = false;
+    refreshLinuxBrlapiOptionsUI();
+    return;
+  }
+
+  if (nextEnabled && !linuxBrlapiState.available) {
+    linuxBrlapiEnabled = false;
+    refreshLinuxBrlapiOptionsUI();
+    if (announce) {
+      const reason =
+        typeof linuxBrlapiState.reason === "string" && linuxBrlapiState.reason.length > 0
+          ? linuxBrlapiState.reason
+          : "BRLAPI est indisponible sur ce systeme.";
+      setStatus(documentStatusMessage, `Impossible d'activer BRLAPI: ${reason}`, "neutral");
+    }
+    return;
+  }
+
+  linuxBrlapiEnabled = nextEnabled;
+  linuxBrlapiState.unavailableNotified = false;
+  refreshLinuxBrlapiOptionsUI();
+
+  if (!linuxBrlapiEnabled) {
+    void clearLinuxBrlapiDisplay();
+    if (announce) {
+      setStatus(documentStatusMessage, "Affichage BRLAPI désactivé.", "neutral");
+    }
+    return;
+  }
+
+  if (announce) {
+    setStatus(
+      documentStatusMessage,
+      "Affichage BRLAPI activé (Ctrl/Cmd+Maj+B pour basculer).",
+      "success",
+    );
+  }
+
+  const activeElement = document.activeElement;
+  if (isLineInput(activeElement)) {
+    updateLinePositionLabel(activeElement);
+  }
+}
+
+function toggleLinuxBrlapiEnabled(options = {}) {
+  setLinuxBrlapiEnabled(!linuxBrlapiEnabled, options);
+}
+
+function flushLinuxBrlapiSync() {
+  linuxBrlapiSyncTimerId = null;
+
+  if (!pendingLinuxBrlapiContext || !linuxBrlapiState.available || !linuxBrlapiEnabled) {
+    return;
+  }
+
+  if (typeof window.brailleApi?.writeLinuxBrlapiDisplay !== "function") {
+    return;
+  }
+
+  const displayText = buildLinuxBrlapiDisplayText(pendingLinuxBrlapiContext);
+  pendingLinuxBrlapiContext = null;
+
+  if (displayText.length === 0) {
+    return;
+  }
+
+  void window.brailleApi
+    .writeLinuxBrlapiDisplay({ text: displayText })
+    .then((response) => {
+      updateLinuxBrlapiAvailabilityFromResponse(response);
+      if (!linuxBrlapiState.available) {
+        notifyLinuxBrlapiUnavailable();
+      }
+    })
+    .catch((error) => {
+      linuxBrlapiState.available = false;
+      linuxBrlapiState.reason = getErrorMessage(error);
+      notifyLinuxBrlapiUnavailable();
+    });
+}
+
+function queueLinuxBrlapiSync(lineInput, linePosition, characterIndex) {
+  if (!(lineInput instanceof HTMLInputElement) || !linePosition || !state.documentConfig) {
+    return;
+  }
+
+  if (document.activeElement !== lineInput || state.documentType !== DOCUMENT_TYPE_BRAILLE) {
+    return;
+  }
+
+  if (!linuxBrlapiState.initialized || !linuxBrlapiState.available || !linuxBrlapiEnabled) {
+    return;
+  }
+
+  pendingLinuxBrlapiContext = {
+    pageIndex: linePosition.pageIndex,
+    lineIndex: linePosition.lineIndex,
+    characterIndex,
+    lineValue: lineInput.value,
+    charactersPerLine: state.documentConfig.charactersPerLine,
+  };
+
+  if (linuxBrlapiSyncTimerId !== null) {
+    window.clearTimeout(linuxBrlapiSyncTimerId);
+  }
+
+  linuxBrlapiSyncTimerId = window.setTimeout(flushLinuxBrlapiSync, LINUX_BRLAPI_SYNC_DEBOUNCE_MS);
+}
+
+async function clearLinuxBrlapiDisplay() {
+  pendingLinuxBrlapiContext = null;
+  if (linuxBrlapiSyncTimerId !== null) {
+    window.clearTimeout(linuxBrlapiSyncTimerId);
+    linuxBrlapiSyncTimerId = null;
+  }
+
+  if (
+    !linuxBrlapiState.initialized ||
+    !linuxBrlapiState.available ||
+    typeof window.brailleApi?.clearLinuxBrlapiDisplay !== "function"
+  ) {
+    return;
+  }
+
+  try {
+    const response = await window.brailleApi.clearLinuxBrlapiDisplay();
+    updateLinuxBrlapiAvailabilityFromResponse(response);
+  } catch (error) {
+    linuxBrlapiState.available = false;
+    linuxBrlapiState.reason = getErrorMessage(error);
+    notifyLinuxBrlapiUnavailable();
+  }
+}
+
+async function initializeLinuxBrlapiSupport() {
+  linuxBrlapiEnabled = false;
+  linuxBrlapiState.initialized = true;
+  linuxBrlapiState.supported = false;
+  linuxBrlapiState.available = false;
+  linuxBrlapiState.displayColumns = 0;
+  linuxBrlapiState.displayRows = 0;
+  linuxBrlapiState.reason = null;
+  linuxBrlapiState.unavailableNotified = false;
+
+  if (!isLinuxClientPlatform() || typeof window.brailleApi?.getLinuxBrlapiStatus !== "function") {
+    refreshLinuxBrlapiOptionsUI();
+    return;
+  }
+
+  try {
+    const response = await window.brailleApi.getLinuxBrlapiStatus();
+    updateLinuxBrlapiAvailabilityFromResponse(response);
+  } catch (error) {
+    linuxBrlapiState.supported = true;
+    linuxBrlapiState.available = false;
+    linuxBrlapiState.reason = getErrorMessage(error);
+  }
+
+  refreshLinuxBrlapiOptionsUI();
 }
 
 function parseBfuStyleTagAt(inputText, startIndex) {
@@ -386,6 +704,12 @@ function refreshCreationFormState() {
   if (pageStructurePagesPerVolumeInput instanceof HTMLInputElement) {
     pageStructurePagesPerVolumeInput.disabled = disableForm;
   }
+  if (linuxBrlapiEnabledToggle instanceof HTMLInputElement) {
+    linuxBrlapiEnabledToggle.disabled =
+      disableForm ||
+      !isLinuxClientPlatform() ||
+      !linuxBrlapiState.available;
+  }
   createDocumentButton.disabled = disableForm;
   openDocumentButton.disabled = disableForm;
   createDocumentButton.textContent = isCreateLoading
@@ -395,6 +719,8 @@ function refreshCreationFormState() {
   if (!disableForm) {
     refreshPageLayoutControlState();
   }
+
+  refreshLinuxBrlapiOptionsUI();
 }
 
 function refreshTranslationButton() {
@@ -1718,6 +2044,7 @@ function updateLinePositionLabel(lineInput) {
   );
 
   labelElement.textContent = compactLabel;
+  queueLinuxBrlapiSync(lineInput, linePosition, characterIndex);
 }
 
 function updateLastFocusedLinePosition(lineInput) {
@@ -2811,6 +3138,9 @@ function renderEditorPages(options = {}) {
   editorPages.replaceChildren();
   lineTranslationRequestIds.clear();
   lineSourceTextById.clear();
+  if (state.documentType !== DOCUMENT_TYPE_BRAILLE) {
+    void clearLinuxBrlapiDisplay();
+  }
 
   state.pages.forEach((pageLines, pageIndex) => {
     const pageBlock = document.createElement("fieldset");
@@ -2858,6 +3188,7 @@ function resetTranslationOutput() {
 function closeCurrentDocument(options = {}) {
   const { preserveStatusMessage = false } = options;
   clearBrailleChordState();
+  void clearLinuxBrlapiDisplay();
   cancelLiveBraillePreviewRefresh();
   styleSupportRequestId += 1;
   lineTranslationRequestIds.clear();
@@ -4427,6 +4758,15 @@ function onShowSpaceMarkersToggleChange(event) {
   setShowSpaceMarkersEnabled(toggle.checked);
 }
 
+function onLinuxBrlapiEnabledToggleChange(event) {
+  const toggle = event.currentTarget;
+  if (!(toggle instanceof HTMLInputElement)) {
+    return;
+  }
+
+  setLinuxBrlapiEnabled(toggle.checked);
+}
+
 function onPageLayoutControlChange() {
   refreshPageLayoutControlState();
 }
@@ -4537,6 +4877,11 @@ function onMenuActionRequest(payload) {
 
   if (payload.action === "toggle-realtime-translation") {
     toggleRealtimeTranslation();
+    return;
+  }
+
+  if (payload.action === "toggle-linux-brlapi") {
+    toggleLinuxBrlapiEnabled();
   }
 }
 
@@ -4574,6 +4919,7 @@ async function bootstrap() {
   try {
     await initializeTables();
     await initializeRuntimeInfo();
+    await initializeLinuxBrlapiSupport();
     isCreateLocked = false;
     await renderStartupWelcomeMessage({ focusBrailleOutput: true });
 
@@ -4627,6 +4973,9 @@ if (realtimeTranslationToggle instanceof HTMLInputElement) {
 }
 if (showSpaceMarkersToggle instanceof HTMLInputElement) {
   showSpaceMarkersToggle.addEventListener("change", onShowSpaceMarkersToggleChange);
+}
+if (linuxBrlapiEnabledToggle instanceof HTMLInputElement) {
+  linuxBrlapiEnabledToggle.addEventListener("change", onLinuxBrlapiEnabledToggleChange);
 }
 [
   pageStructurePrintPagesToggle,
