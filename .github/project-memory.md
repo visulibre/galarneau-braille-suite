@@ -4,8 +4,9 @@
 
 - Application Electron hybride fonctionnelle:
   - preview/saisie instantanee via liblouis-js ;
-  - traduction complete en mode production via liblouisutdml natif Windows
-    (`file2brl.exe`) avec fallback automatique vers liblouis-js.
+  - traduction complete en mode production via liblouisutdml natif
+    (Windows/Linux) quand `file2brl` est disponible, avec fallback
+    automatique vers liblouis-js.
 - Runtime natif present dans le projet:
   - `native/liblouisutdml/bin/file2brl.exe` ;
   - DLL associees (`liblouis.dll`, `liblouisutdml.dll`) ;
@@ -22,8 +23,16 @@
   - `galarneau braille suite version 1.0 en la mémoire de Roland Galarneau.`
 - Panneau d’accueil simplifié: affichage direct du texte normal et de sa
   traduction braille, sans libellés de zone visibles.
-- Packaging configuré avec **electron-builder** pour générer un exécutable
-  Linux AppImage.
+- Packaging configuré avec **electron-builder** pour générer:
+  - Linux AppImage ;
+  - Windows NSIS (`.exe`) et ZIP (`.zip`).
+- Packaging Windows outille:
+  - icone Windows dediee versionnee (`build/icons/app-icon.ico`) ;
+  - script optionnel de regeneration d'icone
+    `npm run assets:icon:win` depuis `build/icons/app-icon.svg` ;
+  - build standard `npm run dist:win` (NSIS + ZIP) ;
+  - build signe `npm run dist:win:signed` avec verification prealable des
+    variables de certificat.
 - Chargement des tables `liblouis` validé en mode packagé
   (`app.asar.unpacked`).
 - Exécution AppImage: dépendance système `libfuse.so.2` requise, avec fallback
@@ -125,6 +134,36 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-10-29 : ajout d'une icone Windows dediee (source SVG versionnee +
+  generation `.ico` via script npm), branchement de l'icone dans
+  `electron-builder` (`win` + `nsis`), ajout d'un garde-fou de signature
+  (`scripts/verify-win-signing-env.js`) et d'une commande de build signe
+  `npm run dist:win:signed`.
+  Validation locale effectuee: generation de `build/icons/app-icon.ico` puis
+  build Windows NSIS+ZIP reussi.
+  Fichiers touches: `build/icons/app-icon.svg`, `scripts/verify-win-signing-env.js`,
+  `package.json`, `README.md`, `.github/project-memory.md`.
+
+- 2026-10-29 : ajout du build Windows dédié `npm run dist:win` avec cibles
+  `nsis` + `zip` (x64) dans `electron-builder`, documentation mise à jour,
+  et validation locale du build avec génération des artefacts:
+  `Galarneau Braille Suite-1.0.0-x64.exe` et
+  `Galarneau Braille Suite-1.0.0-x64.zip`.
+  Fichiers touchés: `package.json`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-10-29 : activation du moteur natif `liblouisutdml` sous Linux en plus
+  de Windows (suppression du verrou plateforme), ajout de la recherche du
+  binaire `file2brl` via chemins projet/packagés/PATH, et préparation
+  automatique des variables d'environnement de bibliothèques dynamiques
+  (`LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH`) lors de l'exécution native.
+  Messages UI harmonisés en multi-plateforme et documentation mise à jour.
+  Fichiers touchés: `src/main/braille-native-service.js`,
+  `src/renderer/app.js`, `README.md`, `native/README.md`,
+  `.github/project-memory.md`.
+  Reste a faire ensuite: ajouter/valider un bundle binaire Linux complet
+  (`file2brl` + libs + tables) pour les distributions cibles du packaging.
 
 - 2026-10-29 : stabilisation du parcours de build natif Windows via Podman
   (poste local WSL2), extraction de l'artefact `liblouisutdml-win64.zip`,

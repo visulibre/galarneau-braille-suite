@@ -4,6 +4,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const FILE2BRL_EXECUTABLE_NAME = process.platform === "win32" ? "file2brl.exe" : "file2brl";
+const PLATFORM_LIBRARY_PATH_ENV = process.platform === "darwin" ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
 
 function addCandidatePath(candidates, candidatePath) {
   if (typeof candidatePath !== "string" || candidatePath.length === 0) {
@@ -17,10 +18,95 @@ function addCandidatePath(candidates, candidatePath) {
 
 function isFilePathReadable(filePath) {
   try {
-    return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      return false;
+    }
+
+    if (process.platform !== "win32") {
+      fs.accessSync(filePath, fs.constants.X_OK);
+    }
+
+    return true;
   } catch (_error) {
     return false;
   }
+}
+
+function isDirectoryReadable(directoryPath) {
+  try {
+    return fs.existsSync(directoryPath) && fs.statSync(directoryPath).isDirectory();
+  } catch (_error) {
+    return false;
+  }
+}
+
+function collectRuntimeRootCandidates() {
+  const candidates = [];
+  const workspaceRuntimeRoot = path.resolve(__dirname, "..", "..", "native", "liblouisutdml");
+
+  addCandidatePath(candidates, workspaceRuntimeRoot);
+  addCandidatePath(candidates, path.join(workspaceRuntimeRoot, process.platform));
+  addCandidatePath(candidates, path.join(workspaceRuntimeRoot, `${process.platform}-${process.arch}`));
+
+  if (process.resourcesPath) {
+    const resourceRuntimeRoots = [
+      path.join(process.resourcesPath, "native", "liblouisutdml"),
+      path.join(process.resourcesPath, "app.asar.unpacked", "native", "liblouisutdml"),
+    ];
+
+    resourceRuntimeRoots.forEach((runtimeRoot) => {
+      addCandidatePath(candidates, runtimeRoot);
+      addCandidatePath(candidates, path.join(runtimeRoot, process.platform));
+      addCandidatePath(candidates, path.join(runtimeRoot, `${process.platform}-${process.arch}`));
+    });
+  }
+
+  return candidates;
+}
+
+function collectPathExecutableCandidates() {
+  const candidates = [];
+  const pathEnvValue = process.env.PATH;
+
+  if (typeof pathEnvValue !== "string" || pathEnvValue.length === 0) {
+    return candidates;
+  }
+
+  pathEnvValue
+    .split(path.delimiter)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .forEach((segment) => {
+      addCandidatePath(candidates, path.join(segment, FILE2BRL_EXECUTABLE_NAME));
+    });
+
+  return candidates;
+}
+
+function prependUniquePathEntries(existingValue, nextEntries) {
+  const mergedEntries = [];
+
+  nextEntries
+    .filter((entry) => typeof entry === "string" && entry.length > 0)
+    .forEach((entry) => {
+      if (!mergedEntries.includes(entry)) {
+        mergedEntries.push(entry);
+      }
+    });
+
+  if (typeof existingValue === "string" && existingValue.length > 0) {
+    existingValue
+      .split(path.delimiter)
+      .map((segment) => segment.trim())
+      .filter((segment) => segment.length > 0)
+      .forEach((segment) => {
+        if (!mergedEntries.includes(segment)) {
+          mergedEntries.push(segment);
+        }
+      });
+  }
+
+  return mergedEntries.join(path.delimiter);
 }
 
 function isValidTableDirectory(directoryPath) {
@@ -45,26 +131,11 @@ function collectExecutableCandidates() {
     );
   }
 
-  const workspaceCandidateBase = path.resolve(__dirname, "..", "..", "native", "liblouisutdml", "bin");
-  addCandidatePath(candidates, path.join(workspaceCandidateBase, FILE2BRL_EXECUTABLE_NAME));
+  collectRuntimeRootCandidates().forEach((runtimeRoot) => {
+    addCandidatePath(candidates, path.join(runtimeRoot, "bin", FILE2BRL_EXECUTABLE_NAME));
+  });
 
-  if (process.resourcesPath) {
-    addCandidatePath(
-      candidates,
-      path.join(process.resourcesPath, "native", "liblouisutdml", "bin", FILE2BRL_EXECUTABLE_NAME),
-    );
-    addCandidatePath(
-      candidates,
-      path.join(
-        process.resourcesPath,
-        "app.asar.unpacked",
-        "native",
-        "liblouisutdml",
-        "bin",
-        FILE2BRL_EXECUTABLE_NAME,
-      ),
-    );
-  }
+  collectPathExecutableCandidates().forEach((candidatePath) => addCandidatePath(candidates, candidatePath));
 
   return candidates;
 }
@@ -80,25 +151,33 @@ function collectTableDirectoryCandidates(executablePath) {
   addCandidatePath(candidates, path.resolve(executableDirectory, "..", "share", "liblouis", "tables"));
   addCandidatePath(candidates, path.resolve(executableDirectory, "..", "tables"));
   addCandidatePath(candidates, path.resolve(executableDirectory, "..", "..", "tables"));
-  addCandidatePath(
-    candidates,
-    path.resolve(__dirname, "..", "..", "native", "liblouisutdml", "tables"),
-  );
+
+  collectRuntimeRootCandidates().forEach((runtimeRoot) => {
+    addCandidatePath(candidates, path.join(runtimeRoot, "share", "liblouis", "tables"));
+    addCandidatePath(candidates, path.join(runtimeRoot, "tables"));
+  });
 
   return candidates;
 }
 
-function resolveNativeRuntime() {
-  if (process.platform !== "win32") {
-    return {
-      available: false,
-      reason: "Le moteur natif liblouisutdml est activé uniquement sous Windows dans cette version.",
-      executablePath: null,
-      tablesPath: null,
-      searchedExecutablePaths: [],
-    };
-  }
+function collectLibraryDirectoryCandidates(executablePath) {
+  const candidates = [];
+  const executableDirectory = path.dirname(executablePath);
 
+  addCandidatePath(candidates, executableDirectory);
+  addCandidatePath(candidates, path.resolve(executableDirectory, "..", "lib"));
+  addCandidatePath(candidates, path.resolve(executableDirectory, "..", "lib64"));
+
+  collectRuntimeRootCandidates().forEach((runtimeRoot) => {
+    addCandidatePath(candidates, path.join(runtimeRoot, "bin"));
+    addCandidatePath(candidates, path.join(runtimeRoot, "lib"));
+    addCandidatePath(candidates, path.join(runtimeRoot, "lib64"));
+  });
+
+  return candidates.filter((candidatePath) => isDirectoryReadable(candidatePath));
+}
+
+function resolveNativeRuntime() {
   const searchedExecutablePaths = collectExecutableCandidates();
   const executablePath = searchedExecutablePaths.find((candidatePath) => isFilePathReadable(candidatePath));
 
@@ -106,7 +185,8 @@ function resolveNativeRuntime() {
     return {
       available: false,
       reason:
-        "file2brl.exe introuvable. Place les binaires liblouisutdml dans native/liblouisutdml/bin " +
+        `${FILE2BRL_EXECUTABLE_NAME} introuvable. Place les binaires liblouisutdml dans native/liblouisutdml/bin ` +
+        `ou native/liblouisutdml/${process.platform}-${process.arch}/bin, ` +
         "ou définis GBS_LIBLOUISUTDML_FILE2BRL.",
       executablePath: null,
       tablesPath: null,
@@ -191,6 +271,16 @@ function translateTextToBrailleWithNativeEngine(options) {
       executionEnv.LOUIS_TABLEPATH = runtime.tablesPath;
     }
 
+    if (process.platform !== "win32") {
+      const libraryPathEntries = collectLibraryDirectoryCandidates(runtime.executablePath);
+      if (libraryPathEntries.length > 0) {
+        executionEnv[PLATFORM_LIBRARY_PATH_ENV] = prependUniquePathEntries(
+          executionEnv[PLATFORM_LIBRARY_PATH_ENV],
+          libraryPathEntries,
+        );
+      }
+    }
+
     const commandArguments = buildFile2BrlArguments({
       tableFile: options.tableFile,
       charactersPerLine: options.charactersPerLine,
@@ -217,7 +307,7 @@ function translateTextToBrailleWithNativeEngine(options) {
       throw new Error(
         diagnostic.length > 0
           ? diagnostic
-          : `file2brl.exe a quitté avec le code ${commandResult.status}.`,
+          : `${FILE2BRL_EXECUTABLE_NAME} a quitté avec le code ${commandResult.status}.`,
       );
     }
 

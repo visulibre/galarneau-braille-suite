@@ -7,8 +7,12 @@
     "start": "electron .",
     "dev": "electron .",
     "pack": "electron-builder --dir",
+    "assets:icon:win": "magick build/icons/app-icon.svg -background none -define icon:auto-resize=256,128,64,48,32,16 build/icons/app-icon.ico",
+    "verify:win-signing-env": "node scripts/verify-win-signing-env.js",
     "dist": "electron-builder",
-    "dist:linux": "electron-builder --linux AppImage"
+    "dist:linux": "electron-builder --linux AppImage",
+    "dist:win": "electron-builder --win nsis zip",
+    "dist:win:signed": "npm run verify:win-signing-env && electron-builder --win nsis zip"
   },
   "keywords": [
     "braille",
@@ -53,6 +57,29 @@
       ],
       "category": "Utility",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "win": {
+      "icon": "build/icons/app-icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "installerIcon": "build/icons/app-icon.ico",
+      "uninstallerIcon": "build/icons/app-icon.ico",
+      "installerHeaderIcon": "build/icons/app-icon.ico"
     }
   }
 }

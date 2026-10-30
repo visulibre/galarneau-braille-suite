@@ -12,8 +12,8 @@ Créer une application desktop simple pour traduire :
 - du braille vers le texte ;
 - avec un mode hybride:
    - preview temps reel avec **liblouis-js** ;
-   - traduction complete avec le moteur natif Windows **liblouisutdml**
-      quand `file2brl.exe` est disponible.
+   - traduction complete avec le moteur natif **liblouisutdml**
+      quand `file2brl` (`file2brl.exe` sous Windows) est disponible.
 
 ## Origine du nom
 
@@ -37,7 +37,7 @@ Sources consultées :
 
 - **Electron** pour l'application bureau ;
 - **liblouis** (bindings JavaScript) pour le preview et la saisie instantanee ;
-- **liblouisutdml** (binaire `file2brl.exe` sous Windows) pour la traduction
+- **liblouisutdml** (binaire `file2brl` / `file2brl.exe`) pour la traduction
    complete en production ;
 - HTML/CSS/JS (sans framework) pour l'interface.
 
@@ -76,26 +76,48 @@ npm install
 npm start
 ```
 
-## Activer le moteur natif Windows (liblouisutdml)
+## Activer le moteur natif (liblouisutdml)
 
 Le preview reste en `liblouis-js` par defaut. Pour la traduction complete via
-`Ctrl/Cmd+T`, l'application tente d'utiliser `file2brl.exe` sous Windows.
+`Ctrl/Cmd+T`, l'application tente d'utiliser `file2brl` (ou `file2brl.exe`
+sous Windows).
 
-1. Telecharger les binaires Windows de `liblouisutdml`.
-2. Placer `file2brl.exe` dans:
+1. Telecharger les binaires `liblouisutdml` pour ta plateforme.
+2. Placer le binaire natif dans:
 
 ```text
-native/liblouisutdml/bin/file2brl.exe
+native/liblouisutdml/bin/file2brl.exe   (Windows)
+native/liblouisutdml/bin/file2brl       (Linux)
 ```
 
-3. Optionnel: definir des variables d'environnement si tu preferes un autre
+3. Placer les tables liblouis (incluant `unicode.dis`) dans:
+
+```text
+native/liblouisutdml/share/liblouis/tables
+```
+
+4. Optionnel: tu peux aussi utiliser des dossiers specifiques plateforme et
+   architecture:
+
+```text
+native/liblouisutdml/linux-x64/bin/file2brl
+native/liblouisutdml/linux-x64/share/liblouis/tables
+```
+
+5. Optionnel: definir des variables d'environnement si tu preferes un autre
    emplacement:
-   - `GBS_LIBLOUISUTDML_FILE2BRL` (chemin complet vers `file2brl.exe`)
-   - `GBS_LIBLOUISUTDML_BIN` (dossier contenant `file2brl.exe`)
+   - `GBS_LIBLOUISUTDML_FILE2BRL` (chemin complet vers `file2brl`/`file2brl.exe`)
+   - `GBS_LIBLOUISUTDML_BIN` (dossier contenant `file2brl`/`file2brl.exe`)
    - `GBS_LIBLOUIS_TABLES_DIR` (dossier de tables liblouis avec `unicode.dis`)
 
-Si `file2brl.exe` est absent ou echoue, l'application bascule automatiquement
-sur `liblouis-js` et affiche un message d'information.
+Sous Linux, verifie que le binaire est executable:
+
+```bash
+chmod +x native/liblouisutdml/bin/file2brl
+```
+
+Si `file2brl` est absent ou echoue, l'application bascule automatiquement sur
+`liblouis-js` et affiche un message d'information.
 
 ## Générer un exécutable (Electron Builder)
 
@@ -105,6 +127,32 @@ Construire l’exécutable Linux (AppImage) :
 npm run dist:linux
 ```
 
+Construire les artefacts Windows (NSIS + ZIP) :
+
+```bash
+npm run dist:win
+```
+
+Le build utilise l'icone versionnee `build/icons/app-icon.ico`.
+
+Optionnel: regenerer l'icone `.ico` depuis la source SVG (ImageMagick requis):
+
+```bash
+npm run assets:icon:win
+```
+
+Construire les artefacts Windows signes (NSIS + ZIP) :
+
+```bash
+npm run dist:win:signed
+```
+
+Variables de signature supportees :
+
+- `CSC_LINK` (+ `CSC_KEY_PASSWORD` si necessaire) ;
+- `WIN_CSC_LINK` (+ `WIN_CSC_KEY_PASSWORD` si necessaire) ;
+- `CSC_NAME` (si le certificat est deja dans le store Windows).
+
 Construire avec la cible par défaut configurée :
 
 ```bash
@@ -112,6 +160,14 @@ npm run dist
 ```
 
 Les artefacts sont générés dans le dossier `dist/`.
+
+Pour Windows, la commande `npm run dist:win` génère notamment:
+
+- un installateur NSIS (`.exe`) ;
+- une archive ZIP (`.zip`).
+
+Le build signe utilise les memes artefacts, avec signature de code appliquee
+si les variables de certificat sont correctement definies.
 
 ### Exécuter l’AppImage sous Linux
 

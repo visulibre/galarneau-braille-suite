@@ -3028,7 +3028,7 @@ async function runFullDocumentTranslation() {
     if (!shouldGenerateBrailleCompanion) {
       applyInlineTranslationFromText(response.outputText);
       let translationMessage = usedNativeEngine
-        ? "Traduction terminée avec le moteur natif Windows (liblouisutdml)."
+        ? "Traduction terminée avec le moteur natif (liblouisutdml)."
         : "Traduction terminée.";
       if (translationWarning) {
         translationMessage += ` ${translationWarning}`;
@@ -3074,7 +3074,7 @@ async function runFullDocumentTranslation() {
         setStatus(
           translationStatusMessage,
           usedNativeEngine
-            ? `Traduction terminée avec le moteur natif Windows. Éditeur basculé vers ${toFileName(generatedFilePath)}.`
+            ? `Traduction terminée avec le moteur natif. Éditeur basculé vers ${toFileName(generatedFilePath)}.`
             : `Traduction terminée. Éditeur basculé vers ${toFileName(generatedFilePath)}.`,
           "success",
         );
@@ -3738,12 +3738,19 @@ async function bootstrap() {
     isCreateLocked = false;
     await renderStartupWelcomeMessage({ focusBrailleOutput: true });
 
-    const nativeEngineReady = state.runtimeInfo?.productionEngine?.available === true;
+    const nativeEngineInfo = state.runtimeInfo?.productionEngine ?? null;
+    const nativeEngineReady = nativeEngineInfo?.available === true;
+    const nativeEngineReason =
+      typeof nativeEngineInfo?.reason === "string" && nativeEngineInfo.reason.length > 0
+        ? nativeEngineInfo.reason
+        : null;
     setStatus(
       documentStatusMessage,
       nativeEngineReady
-        ? "Utilise Ctrl/Cmd+N pour afficher la création de document. Moteur natif Windows prêt pour la traduction complète."
-        : "Utilise Ctrl/Cmd+N pour afficher la création de document. Le preview fonctionne via liblouis-js; le moteur natif s'activera quand file2brl.exe sera disponible.",
+        ? "Utilise Ctrl/Cmd+N pour afficher la création de document. Moteur natif liblouisutdml prêt pour la traduction complète."
+        : `Utilise Ctrl/Cmd+N pour afficher la création de document. Le preview fonctionne via liblouis-js; le moteur natif s'activera quand le binaire file2brl sera disponible.${
+            nativeEngineReason ? ` ${nativeEngineReason}` : ""
+          }`,
       "neutral",
     );
   } catch (error) {
