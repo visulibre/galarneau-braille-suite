@@ -30,6 +30,21 @@ const SUPPORTED_DIRECTIONS = Object.freeze(["text-to-braille", "braille-to-text"
 const DEFAULT_TABLE = BRAILLE_TABLES[0].table;
 const TRANSLATION_EXECUTION_MODES = Object.freeze(["preview", "production"]);
 const DEFAULT_TRANSLATION_EXECUTION_MODE = "preview";
+const PAGE_NUMBER_POSITION_VALUES = new Set(["top", "bottom"]);
+const DEFAULT_NATIVE_PAGE_LAYOUT = Object.freeze({
+  printPages: true,
+  braillePages: true,
+  numberBraillePages: true,
+  continuePages: true,
+  pageSeparator: true,
+  pageSeparatorNumber: true,
+  printPageNumberAt: "top",
+  braillePageNumberAt: "bottom",
+  beginningPageNumber: 1,
+  contents: false,
+  printPageNumbersInContents: true,
+  braillePageNumbersInContents: true,
+});
 const INTERNAL_STYLE_FLAGS = Object.freeze({
   italic: 0x01,
   underline: 0x02,
@@ -224,6 +239,115 @@ function normalizeExecutionMode(executionMode) {
   return DEFAULT_TRANSLATION_EXECUTION_MODE;
 }
 
+function isValidPageNumberPosition(value) {
+  return typeof value === "string" && PAGE_NUMBER_POSITION_VALUES.has(value);
+}
+
+function ensureValidNativePageLayout(pageLayout) {
+  if (pageLayout === undefined) {
+    return;
+  }
+
+  if (!pageLayout || typeof pageLayout !== "object" || Array.isArray(pageLayout)) {
+    throw new TypeError("La structure de pagination native est invalide.");
+  }
+
+  const booleanKeys = [
+    "printPages",
+    "braillePages",
+    "numberBraillePages",
+    "continuePages",
+    "pageSeparator",
+    "pageSeparatorNumber",
+    "contents",
+    "printPageNumbersInContents",
+    "braillePageNumbersInContents",
+  ];
+  booleanKeys.forEach((key) => {
+    if (pageLayout[key] !== undefined && typeof pageLayout[key] !== "boolean") {
+      throw new TypeError(`La valeur native ${key} doit etre booleenne.`);
+    }
+  });
+
+  if (
+    pageLayout.printPageNumberAt !== undefined &&
+    !isValidPageNumberPosition(pageLayout.printPageNumberAt)
+  ) {
+    throw new TypeError("La position du numero de page imprimee est invalide.");
+  }
+
+  if (
+    pageLayout.braillePageNumberAt !== undefined &&
+    !isValidPageNumberPosition(pageLayout.braillePageNumberAt)
+  ) {
+    throw new TypeError("La position du numero de page braille est invalide.");
+  }
+
+  if (
+    pageLayout.beginningPageNumber !== undefined &&
+    (!Number.isInteger(pageLayout.beginningPageNumber) ||
+      pageLayout.beginningPageNumber < 1 ||
+      pageLayout.beginningPageNumber > 9999)
+  ) {
+    throw new TypeError("Le numero de debut de page braille est invalide.");
+  }
+}
+
+function normalizeNativePageLayout(pageLayout) {
+  const source = pageLayout && typeof pageLayout === "object" ? pageLayout : {};
+
+  return {
+    printPages:
+      typeof source.printPages === "boolean"
+        ? source.printPages
+        : DEFAULT_NATIVE_PAGE_LAYOUT.printPages,
+    braillePages:
+      typeof source.braillePages === "boolean"
+        ? source.braillePages
+        : DEFAULT_NATIVE_PAGE_LAYOUT.braillePages,
+    numberBraillePages:
+      typeof source.numberBraillePages === "boolean"
+        ? source.numberBraillePages
+        : DEFAULT_NATIVE_PAGE_LAYOUT.numberBraillePages,
+    continuePages:
+      typeof source.continuePages === "boolean"
+        ? source.continuePages
+        : DEFAULT_NATIVE_PAGE_LAYOUT.continuePages,
+    pageSeparator:
+      typeof source.pageSeparator === "boolean"
+        ? source.pageSeparator
+        : DEFAULT_NATIVE_PAGE_LAYOUT.pageSeparator,
+    pageSeparatorNumber:
+      typeof source.pageSeparatorNumber === "boolean"
+        ? source.pageSeparatorNumber
+        : DEFAULT_NATIVE_PAGE_LAYOUT.pageSeparatorNumber,
+    printPageNumberAt: isValidPageNumberPosition(source.printPageNumberAt)
+      ? source.printPageNumberAt
+      : DEFAULT_NATIVE_PAGE_LAYOUT.printPageNumberAt,
+    braillePageNumberAt: isValidPageNumberPosition(source.braillePageNumberAt)
+      ? source.braillePageNumberAt
+      : DEFAULT_NATIVE_PAGE_LAYOUT.braillePageNumberAt,
+    beginningPageNumber:
+      Number.isInteger(source.beginningPageNumber) &&
+      source.beginningPageNumber >= 1 &&
+      source.beginningPageNumber <= 9999
+        ? source.beginningPageNumber
+        : DEFAULT_NATIVE_PAGE_LAYOUT.beginningPageNumber,
+    contents:
+      typeof source.contents === "boolean"
+        ? source.contents
+        : DEFAULT_NATIVE_PAGE_LAYOUT.contents,
+    printPageNumbersInContents:
+      typeof source.printPageNumbersInContents === "boolean"
+        ? source.printPageNumbersInContents
+        : DEFAULT_NATIVE_PAGE_LAYOUT.printPageNumbersInContents,
+    braillePageNumbersInContents:
+      typeof source.braillePageNumbersInContents === "boolean"
+        ? source.braillePageNumbersInContents
+        : DEFAULT_NATIVE_PAGE_LAYOUT.braillePageNumbersInContents,
+  };
+}
+
 function ensureValidNativeFormatting(nativeFormatting) {
   if (nativeFormatting === undefined) {
     return;
@@ -250,6 +374,8 @@ function ensureValidNativeFormatting(nativeFormatting) {
   ) {
     throw new TypeError("Le nombre de caracteres par ligne pour le moteur natif est invalide.");
   }
+
+  ensureValidNativePageLayout(nativeFormatting.pageLayout);
 }
 
 function ensureValidPayload(payload) {
@@ -592,6 +718,7 @@ function resolveNativeFormatting(payload) {
     charactersPerLine: Number.isInteger(formatting?.charactersPerLine)
       ? formatting.charactersPerLine
       : 40,
+    pageLayout: normalizeNativePageLayout(formatting?.pageLayout),
   };
 }
 
@@ -653,6 +780,7 @@ function translateForProduction(table, payload) {
       tableFile: resolveNativeTableFile(table),
       linesPerPage: nativeFormatting.linesPerPage,
       charactersPerLine: nativeFormatting.charactersPerLine,
+      pageLayout: nativeFormatting.pageLayout,
     });
 
     return normalizeTranslationResult({

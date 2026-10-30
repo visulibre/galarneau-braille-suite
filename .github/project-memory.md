@@ -7,6 +7,12 @@
   - traduction complete en mode production via liblouisutdml natif
     (Windows/Linux) quand `file2brl` est disponible, avec fallback
     automatique vers liblouis-js.
+- Les options de structure de pages (imprimees/braille, numerotation,
+  separateurs, numero de depart) configurees dans l'UI sont transmises au
+  moteur natif `file2brl`.
+- Les sauts de page explicites (`\f`) produits par le moteur natif sont
+  conserves jusqu'au renderer pour permettre le decoupage correct des pages
+  braille.
 - Runtime natif present dans le projet:
   - `native/liblouisutdml/bin/file2brl.exe` ;
   - DLL associees (`liblouis.dll`, `liblouisutdml.dll`) ;
@@ -58,10 +64,33 @@
 - Correctif navigation horizontale du repère compact: `c` dans `l#p#c#`
   se met désormais à jour en continu avec `Flèche gauche/droite` (ainsi que
   `Home`/`End`) grâce à un rafraîchissement après déplacement réel du curseur.
+- Configuration avancée de pagination enrichie (création de document +
+  persistance): génération de table des matières braille (`contents`) avec
+  options d'inclusion des numéros imprimés/braille, et découpage optionnel en
+  volumes avec taille maximale de pages par volume.
+- Traduction complète `.gnp -> .gnb` mise à jour pour les volumes:
+  génération automatique de plusieurs fichiers braille (`-vol01`, `-vol02`,
+  etc.) quand le découpage en volumes est actif, puis bascule de l'éditeur sur
+  le premier volume.
+- Paramètres natifs `file2brl` alignés avec les clés documentées
+  (`printPages`, `braillePages`, `contents`, etc.) pour appliquer la pagination
+  et la table des matières côté moteur de production.
+- Raccourci `Ctrl/Cmd+Entrée` en document normal (`.gnp`) : insertion d'un
+  saut de page forcé enregistré dans le document, pris en charge en preview et
+  en traduction complète via segmentation (jointure par `\f`) pour imposer la
+  rupture de page braille/imprimée.
 - Ouverture étendue des fichiers: support natif `.gnp`/`.gnb`/`.gbs` conservé,
   avec import texte de documents externes `.doc`, `.docx`, `.odt`, `.odf`,
   `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown` convertis automatiquement en
   document normal interne.
+- Import enrichi des emphases bureautiques: conservation de `gras/italique/
+  soulignement` sur `.docx`, `.odt/.odf` et `.rtf` via conversion en balises
+  BFU (`<b>`, `<i>`, `<u>`) avant traduction. Les fichiers `.doc` legacy
+  restent pris en charge avec avertissement explicite sur les limites
+  possibles de récupération de formatage.
+- Import enrichi de l'alignement: conservation du centrage de paragraphes
+  sur `.docx`, `.odt/.odf` et `.rtf`, converti en centrage effectif des
+  lignes importees selon la largeur (`charactersPerLine`) du document cible.
 - Passage de maintenance npm appliqué: dépendances de build migrées vers
   `electron@^45.1.0` et `electron-builder@^26.18.0`, audit npm final à
   `0 vulnerability`.
@@ -134,6 +163,62 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-10-30 : finalisation de l'import enrichi de styles texte pour
+  documents externes:
+  - parseur `.docx` (WordprocessingML) mis a jour pour conserver
+    `gras/italique/soulignement` run par run via balises BFU ;
+  - parseur `.odt/.odf` mis a jour avec resolution de styles ODF et gestion
+    des spans imbriques pour conserver les emphases ;
+  - parseur `.rtf` remplace par un parseur de groupes/commandes de controle
+    avec preservation des transitions `b/i/ul` ;
+  - ajout d'un avertissement utilisateur lors de l'import `.doc` legacy pour
+    signaler les limites possibles de formatage.
+  Fichiers touches: `src/main/gbs-document-service.js`,
+  `src/renderer/app.js`, `.github/project-memory.md`.
+
+- 2026-10-29 : ajout de la prise en charge du centrage a l'import externe:
+  - `.docx`: detection du centrage de paragraphe via `w:jc` direct et via
+    styles de paragraphe (`word/styles.xml`) avec heritage ;
+  - `.odt/.odf`: detection `fo:text-align=center` sur styles de paragraphe
+    resolves (heritage inclus) ;
+  - `.rtf`: detection des controles d'alignement (`\\qc`, `\\ql`, `\\qr`,
+    `\\qj`, `\\pard`) ;
+  - application finale: centrage des lignes marquees pendant l'import selon
+    `charactersPerLine`, en tenant compte des balises BFU pour la largeur
+    visible.
+  Fichiers touches: `src/main/gbs-document-service.js`,
+  `.github/project-memory.md`.
+
+- 2026-10-29 : ajout des fonctionnalités "table des matières" et "volumes"
+  dans la configuration de structure de pages:
+  - UI: nouvelles options pour activer `contents`, inclure les numéros de page
+    dans le sommaire, et découper la sortie en volumes avec un maximum de pages
+    par volume ;
+  - persistance: lecture/écriture des nouveaux paramètres dans les documents
+    `.gnp/.gnb` ;
+  - moteur natif: passage des options de sommaire vers `file2brl` avec noms de
+    clés `outputFormat` documentés ;
+  - génération braille: en mode volumes, création automatique de fichiers
+    `-volNN.gnb` et ouverture du volume 1 dans l'éditeur.
+  Fichiers touchés: `src/renderer/index.html`, `src/renderer/app.js`,
+  `src/main/gbs-document-service.js`, `src/main/braille-service.js`,
+  `src/main/braille-native-service.js`, `.github/project-memory.md`.
+
+- 2026-10-29 : ajout du saut de page forcé par `Ctrl/Cmd+Entrée` dans
+  l'éditeur normal (`.gnp`) avec marqueur interne persistant et adaptation du
+  pipeline de traduction (preview + production) pour traduire par segments et
+  réassembler avec des `\f`, ce qui garantit la rupture de page lors de la
+  génération braille.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+
+- 2026-10-29 : finalisation de la pagination native `file2brl`:
+  branchement des options de structure de pages vers les arguments natifs,
+  ajout d'un repli de compatibilite en cas d'options non supportees, et
+  conservation des sauts de page explicites (`\f`) en sortie native.
+  Nettoyage du fichier temporaire residuel `file2brl.temp`.
+  Fichiers touches: `src/main/braille-native-service.js`,
+  `.github/project-memory.md`.
 
 - 2026-10-29 : ajout d'une icone Windows dediee (source SVG versionnee +
   generation `.ico` via script npm), branchement de l'icone dans

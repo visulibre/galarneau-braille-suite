@@ -115,6 +115,155 @@
             </div>
           </div>
 
+          <fieldset class="field" aria-describedby="page-structure-help">
+            <legend>Structure des pages braille/imprimées</legend>
+
+            <label>
+              <input
+                id="page-structure-print-pages-toggle"
+                type="checkbox"
+                checked
+              />
+              Afficher les numéros de pages imprimées
+            </label>
+
+            <label>
+              <input
+                id="page-structure-braille-pages-toggle"
+                type="checkbox"
+                checked
+              />
+              Séparer en pages braille
+            </label>
+
+            <label>
+              <input
+                id="page-structure-number-braille-pages-toggle"
+                type="checkbox"
+                checked
+              />
+              Numéroter les pages braille
+            </label>
+
+            <label>
+              <input
+                id="page-structure-continue-pages-toggle"
+                type="checkbox"
+                checked
+              />
+              Continuer la numérotation imprimée sur les pages braille (a26, b26…)
+            </label>
+
+            <label>
+              <input
+                id="page-structure-page-separator-toggle"
+                type="checkbox"
+                checked
+              />
+              Insérer un séparateur aux changements de page imprimée
+            </label>
+
+            <label>
+              <input
+                id="page-structure-page-separator-number-toggle"
+                type="checkbox"
+                checked
+              />
+              Afficher le numéro sur la ligne de séparateur
+            </label>
+
+            <div class="field-grid">
+              <div class="field">
+                <label for="page-structure-print-page-number-at">
+                  Position du numéro imprimé
+                </label>
+                <select id="page-structure-print-page-number-at">
+                  <option value="top" selected>Haut de page</option>
+                  <option value="bottom">Bas de page</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="page-structure-braille-page-number-at">
+                  Position du numéro braille
+                </label>
+                <select id="page-structure-braille-page-number-at">
+                  <option value="top">Haut de page</option>
+                  <option value="bottom" selected>Bas de page</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="page-structure-beginning-page-number">
+                  Numéro de début des pages braille
+                </label>
+                <input
+                  id="page-structure-beginning-page-number"
+                  type="number"
+                  min="1"
+                  max="9999"
+                  step="1"
+                  value="1"
+                  required
+                />
+              </div>
+            </div>
+
+            <label>
+              <input
+                id="page-structure-contents-toggle"
+                type="checkbox"
+              />
+              Générer une table des matières braille
+            </label>
+
+            <label>
+              <input
+                id="page-structure-print-page-numbers-in-contents-toggle"
+                type="checkbox"
+                checked
+              />
+              Inclure les numéros de pages imprimées dans la table des matières
+            </label>
+
+            <label>
+              <input
+                id="page-structure-braille-page-numbers-in-contents-toggle"
+                type="checkbox"
+                checked
+              />
+              Inclure les numéros de pages braille dans la table des matières
+            </label>
+
+            <label>
+              <input
+                id="page-structure-split-into-volumes-toggle"
+                type="checkbox"
+              />
+              Découper la sortie braille en volumes
+            </label>
+
+            <div class="field">
+              <label for="page-structure-pages-per-volume">
+                Nombre maximum de pages braille par volume
+              </label>
+              <input
+                id="page-structure-pages-per-volume"
+                type="number"
+                min="1"
+                max="9999"
+                step="1"
+                value="120"
+                required
+              />
+            </div>
+
+            <p id="page-structure-help" class="hint">
+              Ces options pilotent la mise en page lors de la traduction complète native
+              (file2brl/liblouisutdml) et sont enregistrées dans le document.
+            </p>
+          </fieldset>
+
           <div class="action-row">
             <button
               type="submit"

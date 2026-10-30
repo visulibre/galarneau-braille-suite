@@ -45,6 +45,44 @@ const documentTypeRadios = document.querySelectorAll('input[name="document-type"
 const tableSelect = document.querySelector("#table-select");
 const linesPerPageInput = document.querySelector("#lines-per-page");
 const charactersPerLineInput = document.querySelector("#characters-per-line");
+const pageStructurePrintPagesToggle = document.querySelector("#page-structure-print-pages-toggle");
+const pageStructureBraillePagesToggle = document.querySelector("#page-structure-braille-pages-toggle");
+const pageStructureNumberBraillePagesToggle = document.querySelector(
+  "#page-structure-number-braille-pages-toggle",
+);
+const pageStructureContinuePagesToggle = document.querySelector(
+  "#page-structure-continue-pages-toggle",
+);
+const pageStructurePageSeparatorToggle = document.querySelector(
+  "#page-structure-page-separator-toggle",
+);
+const pageStructurePageSeparatorNumberToggle = document.querySelector(
+  "#page-structure-page-separator-number-toggle",
+);
+const pageStructurePrintPageNumberAtSelect = document.querySelector(
+  "#page-structure-print-page-number-at",
+);
+const pageStructureBraillePageNumberAtSelect = document.querySelector(
+  "#page-structure-braille-page-number-at",
+);
+const pageStructureBeginningPageNumberInput = document.querySelector(
+  "#page-structure-beginning-page-number",
+);
+const pageStructureContentsToggle = document.querySelector(
+  "#page-structure-contents-toggle",
+);
+const pageStructurePrintPageNumbersInContentsToggle = document.querySelector(
+  "#page-structure-print-page-numbers-in-contents-toggle",
+);
+const pageStructureBraillePageNumbersInContentsToggle = document.querySelector(
+  "#page-structure-braille-page-numbers-in-contents-toggle",
+);
+const pageStructureSplitIntoVolumesToggle = document.querySelector(
+  "#page-structure-split-into-volumes-toggle",
+);
+const pageStructurePagesPerVolumeInput = document.querySelector(
+  "#page-structure-pages-per-volume",
+);
 const createDocumentButton = document.querySelector("#create-document-button");
 const openDocumentButton = document.querySelector("#open-document-button");
 const documentStatusMessage = document.querySelector("#document-status-message");
@@ -114,6 +152,25 @@ const BRAILLE_PREVIEW_DEBOUNCE_MS = 80;
 const NORMAL_EDITOR_LINES_PER_PAGE = 120;
 const TRANSLATION_EXECUTION_MODE_PREVIEW = "preview";
 const TRANSLATION_EXECUTION_MODE_PRODUCTION = "production";
+const PAGE_NUMBER_POSITION_VALUES = Object.freeze(["top", "bottom"]);
+const DEFAULT_PAGE_LAYOUT = Object.freeze({
+  printPages: true,
+  braillePages: true,
+  numberBraillePages: true,
+  continuePages: true,
+  pageSeparator: true,
+  pageSeparatorNumber: true,
+  printPageNumberAt: "top",
+  braillePageNumberAt: "bottom",
+  beginningPageNumber: 1,
+  contents: false,
+  printPageNumbersInContents: true,
+  braillePageNumbersInContents: true,
+  splitIntoVolumes: false,
+  pagesPerVolume: 120,
+});
+const FORCED_PAGE_BREAK_MARKER = "[[GBS_PAGE_BREAK]]";
+const FORCED_PAGE_BREAK_PREVIEW_LABEL = "Saut de page forcé";
 const BFU_STYLE_HELP_DEFAULT_TEXT =
   "Sélectionne du texte dans la ligne active puis applique un style BFU. " +
   "Le document enregistre des balises (<b>/<gras>, <i>/<italique>, <u>/<souligne>/<surligne>/<surlignage>) " +
@@ -287,11 +344,57 @@ function refreshCreationFormState() {
   tableSelect.disabled = disableForm;
   linesPerPageInput.disabled = disableForm;
   charactersPerLineInput.disabled = disableForm;
+  if (pageStructurePrintPagesToggle instanceof HTMLInputElement) {
+    pageStructurePrintPagesToggle.disabled = disableForm;
+  }
+  if (pageStructureBraillePagesToggle instanceof HTMLInputElement) {
+    pageStructureBraillePagesToggle.disabled = disableForm;
+  }
+  if (pageStructureNumberBraillePagesToggle instanceof HTMLInputElement) {
+    pageStructureNumberBraillePagesToggle.disabled = disableForm;
+  }
+  if (pageStructureContinuePagesToggle instanceof HTMLInputElement) {
+    pageStructureContinuePagesToggle.disabled = disableForm;
+  }
+  if (pageStructurePageSeparatorToggle instanceof HTMLInputElement) {
+    pageStructurePageSeparatorToggle.disabled = disableForm;
+  }
+  if (pageStructurePageSeparatorNumberToggle instanceof HTMLInputElement) {
+    pageStructurePageSeparatorNumberToggle.disabled = disableForm;
+  }
+  if (pageStructurePrintPageNumberAtSelect instanceof HTMLSelectElement) {
+    pageStructurePrintPageNumberAtSelect.disabled = disableForm;
+  }
+  if (pageStructureBraillePageNumberAtSelect instanceof HTMLSelectElement) {
+    pageStructureBraillePageNumberAtSelect.disabled = disableForm;
+  }
+  if (pageStructureBeginningPageNumberInput instanceof HTMLInputElement) {
+    pageStructureBeginningPageNumberInput.disabled = disableForm;
+  }
+  if (pageStructureContentsToggle instanceof HTMLInputElement) {
+    pageStructureContentsToggle.disabled = disableForm;
+  }
+  if (pageStructurePrintPageNumbersInContentsToggle instanceof HTMLInputElement) {
+    pageStructurePrintPageNumbersInContentsToggle.disabled = disableForm;
+  }
+  if (pageStructureBraillePageNumbersInContentsToggle instanceof HTMLInputElement) {
+    pageStructureBraillePageNumbersInContentsToggle.disabled = disableForm;
+  }
+  if (pageStructureSplitIntoVolumesToggle instanceof HTMLInputElement) {
+    pageStructureSplitIntoVolumesToggle.disabled = disableForm;
+  }
+  if (pageStructurePagesPerVolumeInput instanceof HTMLInputElement) {
+    pageStructurePagesPerVolumeInput.disabled = disableForm;
+  }
   createDocumentButton.disabled = disableForm;
   openDocumentButton.disabled = disableForm;
   createDocumentButton.textContent = isCreateLoading
     ? "Chargement des tables…"
     : "Créer le document";
+
+  if (!disableForm) {
+    refreshPageLayoutControlState();
+  }
 }
 
 function refreshTranslationButton() {
@@ -611,6 +714,22 @@ function toCompanionBraillePath(filePath) {
   return withDocumentExtension(filePath, DOCUMENT_TYPE_BRAILLE);
 }
 
+function toVolumeBraillePath(filePath, volumeIndex) {
+  const safeVolumeIndex = Number.isInteger(volumeIndex) && volumeIndex > 0 ? volumeIndex : 1;
+  const volumeSuffix = `-vol${String(safeVolumeIndex).padStart(2, "0")}`;
+  const companionPath = toCompanionBraillePath(filePath);
+
+  if (typeof companionPath !== "string" || companionPath.length === 0) {
+    return `document${volumeSuffix}${getDocumentExtension(DOCUMENT_TYPE_BRAILLE)}`;
+  }
+
+  if (companionPath.toLowerCase().endsWith(".gnb")) {
+    return `${companionPath.slice(0, -4)}${volumeSuffix}.gnb`;
+  }
+
+  return `${companionPath}${volumeSuffix}`;
+}
+
 function toFileName(filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) {
     return `document${getDocumentExtension()}`;
@@ -759,6 +878,226 @@ function ensureBoundedIntegerFromNumber(value, label, min, max) {
   }
 
   return value;
+}
+
+function normalizePageNumberPosition(value, fallbackValue) {
+  if (typeof value !== "string") {
+    return fallbackValue;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  if (PAGE_NUMBER_POSITION_VALUES.includes(normalizedValue)) {
+    return normalizedValue;
+  }
+
+  return fallbackValue;
+}
+
+function normalizePageLayoutConfig(rawConfig) {
+  const source = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+
+  const beginningPageNumber = Number.isInteger(source.beginningPageNumber)
+    ? source.beginningPageNumber
+    : Number.parseInt(source.beginningPageNumber ?? "", 10);
+  const pagesPerVolume = Number.isInteger(source.pagesPerVolume)
+    ? source.pagesPerVolume
+    : Number.parseInt(source.pagesPerVolume ?? "", 10);
+
+  return {
+    printPages:
+      typeof source.printPages === "boolean"
+        ? source.printPages
+        : DEFAULT_PAGE_LAYOUT.printPages,
+    braillePages:
+      typeof source.braillePages === "boolean"
+        ? source.braillePages
+        : DEFAULT_PAGE_LAYOUT.braillePages,
+    numberBraillePages:
+      typeof source.numberBraillePages === "boolean"
+        ? source.numberBraillePages
+        : DEFAULT_PAGE_LAYOUT.numberBraillePages,
+    continuePages:
+      typeof source.continuePages === "boolean"
+        ? source.continuePages
+        : DEFAULT_PAGE_LAYOUT.continuePages,
+    pageSeparator:
+      typeof source.pageSeparator === "boolean"
+        ? source.pageSeparator
+        : DEFAULT_PAGE_LAYOUT.pageSeparator,
+    pageSeparatorNumber:
+      typeof source.pageSeparatorNumber === "boolean"
+        ? source.pageSeparatorNumber
+        : DEFAULT_PAGE_LAYOUT.pageSeparatorNumber,
+    printPageNumberAt: normalizePageNumberPosition(
+      source.printPageNumberAt,
+      DEFAULT_PAGE_LAYOUT.printPageNumberAt,
+    ),
+    braillePageNumberAt: normalizePageNumberPosition(
+      source.braillePageNumberAt,
+      DEFAULT_PAGE_LAYOUT.braillePageNumberAt,
+    ),
+    beginningPageNumber: ensureBoundedIntegerFromNumber(
+      Number.isInteger(beginningPageNumber)
+        ? beginningPageNumber
+        : DEFAULT_PAGE_LAYOUT.beginningPageNumber,
+      "Numéro de début des pages braille",
+      1,
+      9999,
+    ),
+    contents:
+      typeof source.contents === "boolean"
+        ? source.contents
+        : DEFAULT_PAGE_LAYOUT.contents,
+    printPageNumbersInContents:
+      typeof source.printPageNumbersInContents === "boolean"
+        ? source.printPageNumbersInContents
+        : DEFAULT_PAGE_LAYOUT.printPageNumbersInContents,
+    braillePageNumbersInContents:
+      typeof source.braillePageNumbersInContents === "boolean"
+        ? source.braillePageNumbersInContents
+        : DEFAULT_PAGE_LAYOUT.braillePageNumbersInContents,
+    splitIntoVolumes:
+      typeof source.splitIntoVolumes === "boolean"
+        ? source.splitIntoVolumes
+        : DEFAULT_PAGE_LAYOUT.splitIntoVolumes,
+    pagesPerVolume: ensureBoundedIntegerFromNumber(
+      Number.isInteger(pagesPerVolume)
+        ? pagesPerVolume
+        : DEFAULT_PAGE_LAYOUT.pagesPerVolume,
+      "Pages braille par volume",
+      1,
+      9999,
+    ),
+  };
+}
+
+function readPageLayoutConfigFromForm() {
+  return normalizePageLayoutConfig({
+    printPages: pageStructurePrintPagesToggle?.checked,
+    braillePages: pageStructureBraillePagesToggle?.checked,
+    numberBraillePages: pageStructureNumberBraillePagesToggle?.checked,
+    continuePages: pageStructureContinuePagesToggle?.checked,
+    pageSeparator: pageStructurePageSeparatorToggle?.checked,
+    pageSeparatorNumber: pageStructurePageSeparatorNumberToggle?.checked,
+    printPageNumberAt: pageStructurePrintPageNumberAtSelect?.value,
+    braillePageNumberAt: pageStructureBraillePageNumberAtSelect?.value,
+    beginningPageNumber: pageStructureBeginningPageNumberInput?.value,
+    contents: pageStructureContentsToggle?.checked,
+    printPageNumbersInContents: pageStructurePrintPageNumbersInContentsToggle?.checked,
+    braillePageNumbersInContents: pageStructureBraillePageNumbersInContentsToggle?.checked,
+    splitIntoVolumes: pageStructureSplitIntoVolumesToggle?.checked,
+    pagesPerVolume: pageStructurePagesPerVolumeInput?.value,
+  });
+}
+
+function refreshPageLayoutControlState() {
+  const hasPrintPages = pageStructurePrintPagesToggle?.checked === true;
+  const hasBraillePages = pageStructureBraillePagesToggle?.checked === true;
+  const hasBrailleNumbers =
+    hasBraillePages && pageStructureNumberBraillePagesToggle?.checked === true;
+  const hasPageSeparator = hasPrintPages && pageStructurePageSeparatorToggle?.checked === true;
+  const hasContents = pageStructureContentsToggle?.checked === true;
+  const hasVolumeSplit = pageStructureSplitIntoVolumesToggle?.checked === true;
+
+  if (pageStructurePrintPageNumberAtSelect instanceof HTMLSelectElement) {
+    pageStructurePrintPageNumberAtSelect.disabled = !hasPrintPages;
+  }
+  if (pageStructureContinuePagesToggle instanceof HTMLInputElement) {
+    pageStructureContinuePagesToggle.disabled = !hasPrintPages;
+  }
+  if (pageStructurePageSeparatorToggle instanceof HTMLInputElement) {
+    pageStructurePageSeparatorToggle.disabled = !hasPrintPages;
+  }
+  if (pageStructurePageSeparatorNumberToggle instanceof HTMLInputElement) {
+    pageStructurePageSeparatorNumberToggle.disabled = !hasPageSeparator;
+  }
+  if (pageStructureNumberBraillePagesToggle instanceof HTMLInputElement) {
+    pageStructureNumberBraillePagesToggle.disabled = !hasBraillePages;
+  }
+  if (pageStructureBraillePageNumberAtSelect instanceof HTMLSelectElement) {
+    pageStructureBraillePageNumberAtSelect.disabled = !hasBrailleNumbers;
+  }
+  if (pageStructureBeginningPageNumberInput instanceof HTMLInputElement) {
+    pageStructureBeginningPageNumberInput.disabled = !hasBrailleNumbers;
+  }
+  if (pageStructurePrintPageNumbersInContentsToggle instanceof HTMLInputElement) {
+    pageStructurePrintPageNumbersInContentsToggle.disabled = !hasContents;
+  }
+  if (pageStructureBraillePageNumbersInContentsToggle instanceof HTMLInputElement) {
+    pageStructureBraillePageNumbersInContentsToggle.disabled = !hasContents;
+  }
+  if (pageStructurePagesPerVolumeInput instanceof HTMLInputElement) {
+    pageStructurePagesPerVolumeInput.disabled = !hasVolumeSplit;
+  }
+}
+
+function applyPageLayoutConfigToForm(pageLayoutConfig) {
+  const normalizedLayout = normalizePageLayoutConfig(pageLayoutConfig);
+
+  if (pageStructurePrintPagesToggle instanceof HTMLInputElement) {
+    pageStructurePrintPagesToggle.checked = normalizedLayout.printPages;
+  }
+  if (pageStructureBraillePagesToggle instanceof HTMLInputElement) {
+    pageStructureBraillePagesToggle.checked = normalizedLayout.braillePages;
+  }
+  if (pageStructureNumberBraillePagesToggle instanceof HTMLInputElement) {
+    pageStructureNumberBraillePagesToggle.checked = normalizedLayout.numberBraillePages;
+  }
+  if (pageStructureContinuePagesToggle instanceof HTMLInputElement) {
+    pageStructureContinuePagesToggle.checked = normalizedLayout.continuePages;
+  }
+  if (pageStructurePageSeparatorToggle instanceof HTMLInputElement) {
+    pageStructurePageSeparatorToggle.checked = normalizedLayout.pageSeparator;
+  }
+  if (pageStructurePageSeparatorNumberToggle instanceof HTMLInputElement) {
+    pageStructurePageSeparatorNumberToggle.checked = normalizedLayout.pageSeparatorNumber;
+  }
+  if (pageStructurePrintPageNumberAtSelect instanceof HTMLSelectElement) {
+    pageStructurePrintPageNumberAtSelect.value = normalizedLayout.printPageNumberAt;
+  }
+  if (pageStructureBraillePageNumberAtSelect instanceof HTMLSelectElement) {
+    pageStructureBraillePageNumberAtSelect.value = normalizedLayout.braillePageNumberAt;
+  }
+  if (pageStructureBeginningPageNumberInput instanceof HTMLInputElement) {
+    pageStructureBeginningPageNumberInput.value = String(normalizedLayout.beginningPageNumber);
+  }
+  if (pageStructureContentsToggle instanceof HTMLInputElement) {
+    pageStructureContentsToggle.checked = normalizedLayout.contents;
+  }
+  if (pageStructurePrintPageNumbersInContentsToggle instanceof HTMLInputElement) {
+    pageStructurePrintPageNumbersInContentsToggle.checked =
+      normalizedLayout.printPageNumbersInContents;
+  }
+  if (pageStructureBraillePageNumbersInContentsToggle instanceof HTMLInputElement) {
+    pageStructureBraillePageNumbersInContentsToggle.checked =
+      normalizedLayout.braillePageNumbersInContents;
+  }
+  if (pageStructureSplitIntoVolumesToggle instanceof HTMLInputElement) {
+    pageStructureSplitIntoVolumesToggle.checked = normalizedLayout.splitIntoVolumes;
+  }
+  if (pageStructurePagesPerVolumeInput instanceof HTMLInputElement) {
+    pageStructurePagesPerVolumeInput.value = String(normalizedLayout.pagesPerVolume);
+  }
+
+  refreshPageLayoutControlState();
+}
+
+function formatPageLayoutSummary(pageLayoutConfig) {
+  const normalizedLayout = normalizePageLayoutConfig(pageLayoutConfig);
+  const printPagesSummary = normalizedLayout.printPages
+    ? `imprimées: ${normalizedLayout.printPageNumberAt}`
+    : "imprimées: non";
+  const braillePagesSummary = normalizedLayout.braillePages
+    ? `braille: ${normalizedLayout.numberBraillePages ? `${normalizedLayout.braillePageNumberAt}, début ${normalizedLayout.beginningPageNumber}` : "sans numéro"}`
+    : "braille: non";
+  const contentsSummary = normalizedLayout.contents
+    ? `sommaire: ${normalizedLayout.printPageNumbersInContents || normalizedLayout.braillePageNumbersInContents ? "avec numéros" : "sans numéros"}`
+    : "sommaire: non";
+  const volumesSummary = normalizedLayout.splitIntoVolumes
+    ? `volumes: ${normalizedLayout.pagesPerVolume} page(s) max`
+    : "volumes: non";
+
+  return `${printPagesSummary} · ${braillePagesSummary} · ${contentsSummary} · ${volumesSummary}`;
 }
 
 function buildEmptyPage(linesPerPage) {
@@ -1071,6 +1410,99 @@ function flattenDocumentLines() {
 
 function isEditorLineEmpty(lineValue) {
   return typeof lineValue !== "string" || lineValue.length === 0;
+}
+
+function isForcedPageBreakLineValue(lineValue) {
+  return typeof lineValue === "string" && lineValue.trim() === FORCED_PAGE_BREAK_MARKER;
+}
+
+function isTranslationEmptyLineValue(lineValue) {
+  if (typeof lineValue !== "string") {
+    return true;
+  }
+
+  if (isForcedPageBreakLineValue(lineValue)) {
+    return false;
+  }
+
+  return lineValue.trim() === "";
+}
+
+function trimTrailingEmptyTranslationLines(lines) {
+  const normalizedLines = Array.isArray(lines) ? lines.slice() : [];
+  let lastUsefulLineIndex = normalizedLines.length - 1;
+
+  while (
+    lastUsefulLineIndex >= 0 &&
+    isTranslationEmptyLineValue(normalizedLines[lastUsefulLineIndex])
+  ) {
+    lastUsefulLineIndex -= 1;
+  }
+
+  if (lastUsefulLineIndex < 0) {
+    return [];
+  }
+
+  return normalizedLines.slice(0, lastUsefulLineIndex + 1);
+}
+
+function buildTranslationSegmentsFromDocumentLines(lines) {
+  const usefulLines = trimTrailingEmptyTranslationLines(lines);
+  const segments = [[]];
+
+  usefulLines.forEach((lineValue) => {
+    if (isForcedPageBreakLineValue(lineValue)) {
+      segments.push([]);
+      return;
+    }
+
+    segments[segments.length - 1].push(typeof lineValue === "string" ? lineValue : "");
+  });
+
+  return {
+    usefulLines,
+    segments,
+  };
+}
+
+function buildTranslationTextFromDocumentLines(lines) {
+  const { usefulLines, segments } = buildTranslationSegmentsFromDocumentLines(lines);
+  if (usefulLines.length === 0) {
+    return "";
+  }
+
+  return segments.map((segmentLines) => segmentLines.join("\n")).join("\f");
+}
+
+function mapTranslatedTextToDocumentLines(sourceLines, outputText) {
+  if (!Array.isArray(sourceLines) || sourceLines.length === 0) {
+    return [];
+  }
+
+  const normalizedOutputText =
+    typeof outputText === "string"
+      ? outputText.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n")
+      : "";
+  const outputSegments = normalizedOutputText
+    .split("\f")
+    .map((segmentText) => segmentText.split("\n"));
+
+  let outputSegmentIndex = 0;
+  let outputLineIndex = 0;
+
+  return sourceLines.map((sourceLine) => {
+    if (isForcedPageBreakLineValue(sourceLine)) {
+      outputSegmentIndex += 1;
+      outputLineIndex = 0;
+      return FORCED_PAGE_BREAK_PREVIEW_LABEL;
+    }
+
+    const segmentLines =
+      outputSegments[Math.min(outputSegmentIndex, Math.max(0, outputSegments.length - 1))] ?? [""];
+    const translatedLine = segmentLines[outputLineIndex] ?? "";
+    outputLineIndex += 1;
+    return translatedLine;
+  });
 }
 
 function findNextNonEmptyFlatLineIndex(flatLines, startFlatIndex, direction) {
@@ -1452,7 +1884,8 @@ function updateDocumentMetadata() {
   activeDocumentFormat.textContent =
     `${state.documentConfig.linesPerPage} lignes/page · ` +
     `${state.documentConfig.charactersPerLine} caractères/ligne · ` +
-    `${state.pages.length} page(s)`;
+    `${state.pages.length} page(s) · ` +
+    `${formatPageLayoutSummary(state.documentConfig.pageLayout)}`;
 }
 
 function markDocumentChanged() {
@@ -2137,9 +2570,103 @@ function splitCurrentNormalLineAtCaret(lineInput) {
   return true;
 }
 
+function findNextEditableFlatLineIndex(lines, startIndex) {
+  if (!Array.isArray(lines)) {
+    return null;
+  }
+
+  for (let flatLineIndex = Math.max(0, startIndex); flatLineIndex < lines.length; flatLineIndex += 1) {
+    if (!isForcedPageBreakLineValue(lines[flatLineIndex])) {
+      return flatLineIndex;
+    }
+  }
+
+  return null;
+}
+
+function insertForcedPageBreakAtCaret(lineInput) {
+  if (!state.documentConfig || state.documentType !== DOCUMENT_TYPE_NORMAL) {
+    return false;
+  }
+
+  const linePosition = getLinePositionFromInput(lineInput);
+  if (!linePosition) {
+    return false;
+  }
+
+  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  const currentLines = flattenDocumentLines();
+  const currentLineValue = currentLines[currentFlatIndex] ?? "";
+
+  if (isForcedPageBreakLineValue(currentLineValue)) {
+    currentLines.splice(currentFlatIndex + 1, 0, FORCED_PAGE_BREAK_MARKER);
+  } else {
+    const selectionStart = lineInput.selectionStart ?? currentLineValue.length;
+    const selectionEnd = lineInput.selectionEnd ?? selectionStart;
+    const leftPart = currentLineValue.slice(0, selectionStart);
+    const rightPart = currentLineValue.slice(selectionEnd);
+
+    currentLines[currentFlatIndex] = leftPart;
+    if (rightPart.length > 0) {
+      currentLines.splice(currentFlatIndex + 1, 0, FORCED_PAGE_BREAK_MARKER, rightPart);
+    } else {
+      currentLines.splice(currentFlatIndex + 1, 0, FORCED_PAGE_BREAK_MARKER);
+    }
+  }
+
+  state.pages = buildPagesFromFlatLines(currentLines);
+  markDocumentChanged();
+
+  const sourceBufferSnapshot = buildSourceBufferFromDisplayLines();
+  renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+
+  const nextEditableFlatIndex = findNextEditableFlatLineIndex(currentLines, currentFlatIndex + 1);
+  if (nextEditableFlatIndex !== null) {
+    focusLineByFlatIndex(nextEditableFlatIndex, 0);
+  } else {
+    focusLineByFlatIndex(currentFlatIndex, currentLines[currentFlatIndex]?.length ?? 0);
+  }
+
+  refreshActiveLineSpacePreview();
+  refreshAllActionStates();
+
+  if (state.realtimeTranslationEnabled) {
+    scheduleLiveBraillePreviewRefresh();
+  } else if (hasInlineTranslationOutput()) {
+    setStatus(
+      translationStatusMessage,
+      "Le document a changé. Utilise Ctrl/Cmd+T pour mettre à jour la traduction dans l’éditeur.",
+      "neutral",
+    );
+  }
+
+  setStatus(
+    documentStatusMessage,
+    "Saut de page forcé inséré (imprimé + braille) à la prochaine traduction.",
+    "success",
+  );
+
+  return true;
+}
+
 function onLineNavigationKeyDown(event) {
   const lineInput = event.currentTarget;
   if (!isLineInput(lineInput)) {
+    return;
+  }
+
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === "Enter") {
+    event.preventDefault();
+    if (state.documentType !== DOCUMENT_TYPE_NORMAL) {
+      setStatus(
+        documentStatusMessage,
+        "Le saut de page forcé Ctrl/Cmd+Entrée est disponible en document normal (.gnp).",
+        "neutral",
+      );
+      return;
+    }
+
+    insertForcedPageBreakAtCaret(lineInput);
     return;
   }
 
@@ -2573,18 +3100,7 @@ function getDirection() {
 }
 
 function getDocumentTextForTranslation() {
-  const allLines = state.pages.flat();
-  let lastUsefulLineIndex = allLines.length - 1;
-
-  while (lastUsefulLineIndex >= 0 && allLines[lastUsefulLineIndex].trim() === "") {
-    lastUsefulLineIndex -= 1;
-  }
-
-  if (lastUsefulLineIndex < 0) {
-    return "";
-  }
-
-  return allLines.slice(0, lastUsefulLineIndex + 1).join("\n");
+  return buildTranslationTextFromDocumentLines(state.pages.flat());
 }
 
 function getDocumentText() {
@@ -2594,6 +3110,140 @@ function getDocumentText() {
   }
 
   return documentText;
+}
+
+function countBraillePagesInOutputText(outputText) {
+  const normalizedOutputText =
+    typeof outputText === "string"
+      ? outputText.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n")
+      : "";
+
+  if (normalizedOutputText.length === 0) {
+    return 1;
+  }
+
+  return normalizedOutputText.split("\f").length;
+}
+
+function buildNativeFormattingForSegment(nativeFormatting, beginningPageNumber) {
+  if (!nativeFormatting || typeof nativeFormatting !== "object") {
+    return undefined;
+  }
+
+  const normalizedPageLayout = normalizePageLayoutConfig(nativeFormatting.pageLayout);
+  return {
+    ...nativeFormatting,
+    pageLayout: {
+      ...normalizedPageLayout,
+      beginningPageNumber,
+    },
+  };
+}
+
+async function translateDocumentWithForcedPageBreaks(options) {
+  const {
+    table,
+    direction,
+    executionMode,
+    nativeFormatting,
+    documentLines,
+    baseInputText,
+  } = options;
+  const { usefulLines, segments } = buildTranslationSegmentsFromDocumentLines(documentLines);
+
+  if (usefulLines.length === 0) {
+    return {
+      outputText: "",
+      engine: null,
+      executionMode,
+      warning: null,
+    };
+  }
+
+  const hasForcedPageBreaks = segments.length > 1;
+  if (!hasForcedPageBreaks) {
+    const response = await window.brailleApi.translate({
+      table,
+      direction,
+      executionMode,
+      nativeFormatting,
+      inputText: typeof baseInputText === "string" ? baseInputText : usefulLines.join("\n"),
+    });
+
+    if (!response || typeof response.outputText !== "string") {
+      throw new Error("Le service de traduction a retourné une réponse invalide.");
+    }
+
+    return response;
+  }
+
+  const warnings = [];
+  const warningSet = new Set();
+  const engines = [];
+  const outputSegments = [];
+  const pageLayout = normalizePageLayoutConfig(nativeFormatting?.pageLayout);
+  const shouldAdjustBrailleBeginningNumber =
+    executionMode === TRANSLATION_EXECUTION_MODE_PRODUCTION &&
+    pageLayout.numberBraillePages === true;
+  let nextBeginningPageNumber = pageLayout.beginningPageNumber;
+
+  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+    const segmentLines = segments[segmentIndex];
+    const segmentInputText = segmentLines.join("\n");
+
+    if (segmentInputText.length === 0) {
+      outputSegments.push("");
+      if (shouldAdjustBrailleBeginningNumber) {
+        nextBeginningPageNumber += 1;
+      }
+      continue;
+    }
+
+    const segmentNativeFormatting = shouldAdjustBrailleBeginningNumber
+      ? buildNativeFormattingForSegment(nativeFormatting, nextBeginningPageNumber)
+      : nativeFormatting;
+    const response = await window.brailleApi.translate({
+      table,
+      direction,
+      executionMode,
+      nativeFormatting: segmentNativeFormatting,
+      inputText: segmentInputText,
+    });
+
+    if (!response || typeof response.outputText !== "string") {
+      throw new Error("Le service de traduction a retourné une réponse invalide.");
+    }
+
+    outputSegments.push(response.outputText);
+
+    if (typeof response.warning === "string" && response.warning.length > 0) {
+      if (!warningSet.has(response.warning)) {
+        warningSet.add(response.warning);
+        warnings.push(response.warning);
+      }
+    }
+
+    if (typeof response.engine === "string" && response.engine.length > 0) {
+      engines.push(response.engine);
+    }
+
+    if (shouldAdjustBrailleBeginningNumber) {
+      nextBeginningPageNumber += countBraillePagesInOutputText(response.outputText);
+    }
+  }
+
+  const uniqueEngines = [...new Set(engines)];
+  return {
+    outputText: outputSegments.join("\f"),
+    engine:
+      uniqueEngines.length === 1
+        ? uniqueEngines[0]
+        : uniqueEngines.length > 1
+          ? "mixed-forced-page-break"
+          : null,
+    executionMode,
+    warning: warnings.length > 0 ? warnings.join(" ") : null,
+  };
 }
 
 function hasInlineTranslationOutput() {
@@ -2635,12 +3285,7 @@ function applyInlineTranslationFromText(outputText) {
   }
 
   const sourceLines = state.pages.flat();
-  const translatedLines =
-    typeof outputText === "string" && outputText.length > 0
-      ? outputText.split("\n")
-      : [];
-
-  state.inlineTranslatedLines = sourceLines.map((_, lineIndex) => translatedLines[lineIndex] ?? "");
+  state.inlineTranslatedLines = mapTranslatedTextToDocumentLines(sourceLines, outputText);
   renderInlineTranslationInEditor();
 }
 
@@ -2688,7 +3333,8 @@ async function refreshLiveBraillePreview() {
     return;
   }
 
-  const sourceText = getDocumentTextForTranslation();
+  const sourceLines = state.pages.flat();
+  const sourceText = buildTranslationTextFromDocumentLines(sourceLines);
   if (sourceText.length === 0) {
     clearInlineTranslation();
     setLiveBrailleStatus(
@@ -2703,11 +3349,12 @@ async function refreshLiveBraillePreview() {
   setLiveBrailleStatus("Mise à jour de la traduction dans l’éditeur…", "neutral");
 
   try {
-    const response = await window.brailleApi.translate({
+    const response = await translateDocumentWithForcedPageBreaks({
       table: state.documentConfig.table,
       direction: realtimeDirection,
       executionMode: TRANSLATION_EXECUTION_MODE_PREVIEW,
-      inputText: sourceText,
+      documentLines: sourceLines,
+      baseInputText: sourceText,
     });
 
     if (requestId !== liveBraillePreviewRequestId) {
@@ -2804,6 +3451,7 @@ function createDocumentFromForm() {
     1,
     120,
   );
+  const pageLayout = readPageLayoutConfigFromForm();
 
   const now = new Date().toISOString();
   state.documentType = getSelectedDocumentTypeFromForm();
@@ -2812,6 +3460,7 @@ function createDocumentFromForm() {
     tableLabel: selectedTable.label,
     linesPerPage,
     charactersPerLine,
+    pageLayout,
   };
   state.documentMeta = {
     createdAt: now,
@@ -3004,15 +3653,17 @@ async function runFullDocumentTranslation() {
 
   try {
     const inputText = getDocumentText();
-    const response = await window.brailleApi.translate({
+    const response = await translateDocumentWithForcedPageBreaks({
       table: state.documentConfig.table,
       direction: translationDirection,
       executionMode: TRANSLATION_EXECUTION_MODE_PRODUCTION,
       nativeFormatting: {
         linesPerPage: state.documentConfig.linesPerPage,
         charactersPerLine: state.documentConfig.charactersPerLine,
+        pageLayout: normalizePageLayoutConfig(state.documentConfig.pageLayout),
       },
-      inputText,
+      documentLines: sourceLinesSnapshot,
+      baseInputText: inputText,
     });
 
     if (!response || typeof response.outputText !== "string") {
@@ -3037,16 +3688,30 @@ async function runFullDocumentTranslation() {
       setStatus(translationStatusMessage, translationMessage, "success");
     } else {
       const translatedPages = buildPagesFromTranslatedText(response.outputText);
+      const normalizedPageLayout = normalizePageLayoutConfig(state.documentConfig.pageLayout);
+      const shouldSplitIntoVolumes = normalizedPageLayout.splitIntoVolumes === true;
+      let editorBraillePages = translatedPages;
       let generatedFilePath = null;
+      let generatedVolumeCount = 0;
       let generationError = null;
 
       try {
-        generatedFilePath = await generateBrailleCompanionDocument(response.outputText);
+        if (shouldSplitIntoVolumes) {
+          const volumeGenerationResult = await generateBrailleCompanionVolumes(
+            translatedPages,
+            normalizedPageLayout.pagesPerVolume,
+          );
+          generatedFilePath = volumeGenerationResult.savedPaths[0] ?? null;
+          generatedVolumeCount = volumeGenerationResult.savedPaths.length;
+          editorBraillePages = volumeGenerationResult.volumePages[0] ?? translatedPages;
+        } else {
+          generatedFilePath = await generateBrailleCompanionDocument(response.outputText);
+        }
       } catch (error) {
         generationError = error;
       }
 
-      switchEditorToBrailleDocument(translatedPages, {
+      switchEditorToBrailleDocument(editorBraillePages, {
         sourceLines: sourceLinesSnapshot,
         filePath: generatedFilePath,
         markDirty: generatedFilePath === null,
@@ -3054,7 +3719,10 @@ async function runFullDocumentTranslation() {
 
       if (generationError) {
         let translationMessage =
-          "Traduction braille appliquée dans l’éditeur, mais l’enregistrement automatique du .gnb a échoué: " +
+          shouldSplitIntoVolumes
+            ? "Traduction braille appliquée dans l’éditeur, mais la génération des volumes .gnb a échoué: " +
+              getErrorMessage(generationError)
+            : "Traduction braille appliquée dans l’éditeur, mais l’enregistrement automatique du .gnb a échoué: " +
           getErrorMessage(generationError);
         if (translationWarning) {
           translationMessage += ` ${translationWarning}`;
@@ -3067,20 +3735,30 @@ async function runFullDocumentTranslation() {
         );
         setStatus(
           documentStatusMessage,
-          "Éditeur basculé vers le document braille non enregistré. Enregistre en .gnb pour conserver les changements.",
+          shouldSplitIntoVolumes
+            ? "Éditeur basculé vers un document braille non enregistré. Enregistre en .gnb pour conserver les changements."
+            : "Éditeur basculé vers le document braille non enregistré. Enregistre en .gnb pour conserver les changements.",
           "neutral",
         );
       } else {
+        const translationOutcomeMessage = shouldSplitIntoVolumes
+          ? `Traduction terminée${usedNativeEngine ? " avec le moteur natif" : ""}. ` +
+            `${generatedVolumeCount} volume(s) généré(s) (${normalizedPageLayout.pagesPerVolume} page(s)/volume). ` +
+            `Éditeur basculé vers ${toFileName(generatedFilePath)}.`
+          : usedNativeEngine
+            ? `Traduction terminée avec le moteur natif. Éditeur basculé vers ${toFileName(generatedFilePath)}.`
+            : `Traduction terminée. Éditeur basculé vers ${toFileName(generatedFilePath)}.`;
+
         setStatus(
           translationStatusMessage,
-          usedNativeEngine
-            ? `Traduction terminée avec le moteur natif. Éditeur basculé vers ${toFileName(generatedFilePath)}.`
-            : `Traduction terminée. Éditeur basculé vers ${toFileName(generatedFilePath)}.`,
+          translationOutcomeMessage,
           "success",
         );
         setStatus(
           documentStatusMessage,
-          `Document braille actif: ${toFileName(generatedFilePath)}.`,
+          shouldSplitIntoVolumes
+            ? `Volumes braille générés (${generatedVolumeCount}). Document actif: ${toFileName(generatedFilePath)}.`
+            : `Document braille actif: ${toFileName(generatedFilePath)}.`,
           "success",
         );
         if (translationWarning) {
@@ -3147,9 +3825,71 @@ function switchEditorToBrailleDocument(translatedPages, options = {}) {
   focusLineInput(0, 0);
 }
 
+function splitTranslatedTextByBraillePageBreaks(translatedTextValue) {
+  if (typeof translatedTextValue !== "string" || !translatedTextValue.includes("\f")) {
+    return null;
+  }
+
+  const normalizedOutput = translatedTextValue
+    .replace(/\r\n/gu, "\n")
+    .replace(/\r/gu, "\n");
+
+  return normalizedOutput.split("\f").map((pageSegment) => {
+    const pageLines = pageSegment.split("\n");
+
+    while (pageLines.length > 0 && pageLines[pageLines.length - 1] === "") {
+      pageLines.pop();
+    }
+
+    return pageLines.length > 0 ? pageLines : [""];
+  });
+}
+
+function buildBraillePagesFromExplicitPageSegments(pageSegments, linesPerPage, charactersPerLine) {
+  const builtPages = [];
+
+  pageSegments.forEach((segmentLines) => {
+    const safeSegmentLines = Array.isArray(segmentLines) && segmentLines.length > 0
+      ? segmentLines
+      : [""];
+    const wrappedSegmentLines = wrapFlatLinesFromIndex(
+      safeSegmentLines,
+      0,
+      charactersPerLine,
+    ).lines;
+
+    for (
+      let startLineIndex = 0;
+      startLineIndex < wrappedSegmentLines.length;
+      startLineIndex += linesPerPage
+    ) {
+      const pageLines = wrappedSegmentLines.slice(startLineIndex, startLineIndex + linesPerPage);
+      while (pageLines.length < linesPerPage) {
+        pageLines.push("");
+      }
+      builtPages.push(pageLines);
+    }
+  });
+
+  if (builtPages.length === 0) {
+    builtPages.push(buildEmptyPage(linesPerPage));
+  }
+
+  return builtPages;
+}
+
 function buildPagesFromTranslatedText(translatedTextValue) {
   if (!state.documentConfig) {
     throw new Error("Aucun document actif pour préparer le fichier traduit.");
+  }
+
+  const explicitPageSegments = splitTranslatedTextByBraillePageBreaks(translatedTextValue);
+  if (explicitPageSegments) {
+    return buildBraillePagesFromExplicitPageSegments(
+      explicitPageSegments,
+      state.documentConfig.linesPerPage,
+      state.documentConfig.charactersPerLine,
+    );
   }
 
   const translatedLines =
@@ -3163,23 +3903,62 @@ function buildPagesFromTranslatedText(translatedTextValue) {
   return buildPagesFromFlatLines(wrapResult.lines, state.documentConfig.linesPerPage);
 }
 
-async function generateBrailleCompanionDocument(translatedOutputText) {
+function cloneBraillePages(pages) {
+  if (!Array.isArray(pages)) {
+    return [];
+  }
+
+  return pages.map((page) => (Array.isArray(page) ? page.slice() : []));
+}
+
+function splitBraillePagesIntoVolumes(braillePages, pagesPerVolume) {
+  const normalizedPagesPerVolume = ensureBoundedIntegerFromNumber(
+    pagesPerVolume,
+    "Pages braille par volume",
+    1,
+    9999,
+  );
+  const safePages = cloneBraillePages(braillePages);
+
+  if (safePages.length === 0) {
+    return [[buildEmptyPage(state.documentConfig?.linesPerPage ?? 25)]];
+  }
+
+  const volumePages = [];
+  for (
+    let startPageIndex = 0;
+    startPageIndex < safePages.length;
+    startPageIndex += normalizedPagesPerVolume
+  ) {
+    volumePages.push(
+      safePages.slice(startPageIndex, startPageIndex + normalizedPagesPerVolume),
+    );
+  }
+
+  return volumePages;
+}
+
+async function saveBrailleCompanionDocumentFromPages(braillePages, filePath) {
   if (!state.documentConfig || !state.filePath) {
     throw new Error("Le document source doit être enregistré en .gnp avant génération.");
   }
 
-  const companionPath = toCompanionBraillePath(state.filePath);
+  const targetPath =
+    typeof filePath === "string" && filePath.length > 0
+      ? filePath
+      : toCompanionBraillePath(state.filePath);
+
   const companionPayload = buildDocumentPayload({
     documentType: DOCUMENT_TYPE_BRAILLE,
     defaultDirection: "text-to-braille",
     inputMode: INPUT_MODE_TEXT,
     realtimeTranslationEnabled: true,
-    pages: buildPagesFromTranslatedText(translatedOutputText),
+    pages: cloneBraillePages(braillePages),
   });
 
   const response = await window.brailleApi.saveDocument({
     document: companionPayload,
-    filePath: companionPath,
+    filePath: targetPath,
   });
 
   if (!response || typeof response !== "object") {
@@ -3195,6 +3974,46 @@ async function generateBrailleCompanionDocument(translatedOutputText) {
   }
 
   return response.filePath;
+}
+
+async function generateBrailleCompanionDocument(translatedOutputText) {
+  const translatedPages = buildPagesFromTranslatedText(translatedOutputText);
+  return saveBrailleCompanionDocumentFromPages(translatedPages);
+}
+
+async function generateBrailleCompanionVolumes(translatedPages, pagesPerVolume) {
+  if (!state.filePath) {
+    throw new Error("Le document source doit être enregistré en .gnp avant génération.");
+  }
+
+  const volumePages = splitBraillePagesIntoVolumes(translatedPages, pagesPerVolume);
+  const savedPaths = [];
+
+  for (let volumeIndex = 0; volumeIndex < volumePages.length; volumeIndex += 1) {
+    const volumeFilePath = toVolumeBraillePath(state.filePath, volumeIndex + 1);
+
+    try {
+      const savedPath = await saveBrailleCompanionDocumentFromPages(
+        volumePages[volumeIndex],
+        volumeFilePath,
+      );
+      savedPaths.push(savedPath);
+    } catch (error) {
+      const generatedVolumesLabel =
+        savedPaths.length > 0
+          ? savedPaths.map((savedPath) => toFileName(savedPath)).join(", ")
+          : "aucun";
+      throw new Error(
+        `Impossible de générer le volume ${volumeIndex + 1}: ${getErrorMessage(error)}. ` +
+          `Volumes déjà générés: ${generatedVolumesLabel}.`,
+      );
+    }
+  }
+
+  return {
+    volumePages,
+    savedPaths,
+  };
 }
 
 async function onTranslate(event) {
@@ -3240,6 +4059,7 @@ function buildDocumentPayload(overrides = {}) {
       tableLabel: state.documentConfig.tableLabel,
       linesPerPage: state.documentConfig.linesPerPage,
       charactersPerLine: state.documentConfig.charactersPerLine,
+      pageLayout: normalizePageLayoutConfig(state.documentConfig.pageLayout),
     },
     pages: Array.isArray(overrides.pages)
       ? overrides.pages.map((page) => (Array.isArray(page) ? page.slice() : []))
@@ -3282,6 +4102,7 @@ function applyLoadedDocumentFromFile(loadedDocument, filePath) {
     1,
     120,
   );
+  const pageLayout = normalizePageLayoutConfig(config.pageLayout);
   const documentType = normalizeDocumentType(loadedDocument.documentType);
   const isBrailleDocument = documentType === DOCUMENT_TYPE_BRAILLE;
 
@@ -3348,6 +4169,7 @@ function applyLoadedDocumentFromFile(loadedDocument, filePath) {
     tableLabel: selectedTable.label,
     linesPerPage,
     charactersPerLine,
+    pageLayout,
   };
   state.documentMeta = {
     createdAt,
@@ -3370,6 +4192,7 @@ function applyLoadedDocumentFromFile(loadedDocument, filePath) {
   tableSelect.value = selectedTable.table;
   linesPerPageInput.value = String(linesPerPage);
   charactersPerLineInput.value = String(charactersPerLine);
+  applyPageLayoutConfigToForm(pageLayout);
   const effectiveDirection =
     documentType === DOCUMENT_TYPE_BRAILLE ? "text-to-braille" : defaultDirection;
   const effectiveInputMode =
@@ -3478,6 +4301,9 @@ function buildOpenDocumentRequestPayload() {
   const charactersPerLineCandidate = state.documentConfig
     ? state.documentConfig.charactersPerLine
     : Number.parseInt(charactersPerLineInput.value, 10);
+  const pageLayout = normalizePageLayoutConfig(
+    state.documentConfig?.pageLayout ?? readPageLayoutConfigFromForm(),
+  );
 
   return {
     importOptions: {
@@ -3485,6 +4311,7 @@ function buildOpenDocumentRequestPayload() {
       tableLabel: selectedTable?.label ?? "Francais BFU grade 2",
       linesPerPage: coerceBoundedInteger(linesPerPageCandidate, 25, 1, 60),
       charactersPerLine: coerceBoundedInteger(charactersPerLineCandidate, 40, 1, 120),
+      pageLayout,
     },
   };
 }
@@ -3527,14 +4354,21 @@ async function onOpenDocument() {
     }
 
     applyLoadedDocumentFromFile(response.document, response.filePath);
+    const importWarning =
+      typeof response.warning === "string" && response.warning.length > 0
+        ? response.warning
+        : null;
     const openedDocumentMessage =
       response.imported === true
         ? `Document importe: ${toFileName(response.filePath)}.`
         : `Document ouvert: ${toFileName(response.filePath)}.`;
+    const statusMessage = importWarning
+      ? `${openedDocumentMessage} ${importWarning}`
+      : openedDocumentMessage;
     setStatus(
       documentStatusMessage,
-      openedDocumentMessage,
-      "success",
+      statusMessage,
+      importWarning ? "neutral" : "success",
     );
     setStatus(translationStatusMessage, "Document chargé. Prêt à traduire.", "neutral");
     focusLineInput(0, 0);
@@ -3591,6 +4425,10 @@ function onShowSpaceMarkersToggleChange(event) {
   }
 
   setShowSpaceMarkersEnabled(toggle.checked);
+}
+
+function onPageLayoutControlChange() {
+  refreshPageLayoutControlState();
 }
 
 function toggleRealtimeTranslation() {
@@ -3728,6 +4566,7 @@ async function bootstrap() {
       : false,
     { announce: false },
   );
+  applyPageLayoutConfigToForm(DEFAULT_PAGE_LAYOUT);
   renderBrailleDotGuide();
   isCreateLoading = true;
   refreshAllActionStates();
@@ -3789,6 +4628,28 @@ if (realtimeTranslationToggle instanceof HTMLInputElement) {
 if (showSpaceMarkersToggle instanceof HTMLInputElement) {
   showSpaceMarkersToggle.addEventListener("change", onShowSpaceMarkersToggleChange);
 }
+[
+  pageStructurePrintPagesToggle,
+  pageStructureBraillePagesToggle,
+  pageStructureNumberBraillePagesToggle,
+  pageStructureContinuePagesToggle,
+  pageStructurePageSeparatorToggle,
+  pageStructurePageSeparatorNumberToggle,
+  pageStructurePrintPageNumberAtSelect,
+  pageStructureBraillePageNumberAtSelect,
+  pageStructureBeginningPageNumberInput,
+  pageStructureContentsToggle,
+  pageStructurePrintPageNumbersInContentsToggle,
+  pageStructureBraillePageNumbersInContentsToggle,
+  pageStructureSplitIntoVolumesToggle,
+  pageStructurePagesPerVolumeInput,
+].forEach((control) => {
+  if (!(control instanceof HTMLElement)) {
+    return;
+  }
+
+  control.addEventListener("change", onPageLayoutControlChange);
+});
 window.addEventListener("keydown", onGlobalKeyDown);
 
 if (typeof window.brailleApi?.onMenuAction === "function") {
