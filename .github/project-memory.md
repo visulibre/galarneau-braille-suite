@@ -96,10 +96,11 @@
   - Windows via NVDA Controller Client (`nvdaControllerClient64.dll` et
     alias de compatibilite) ;
   mode activable via option dans le panneau de creation de document et via
-  raccourci `Ctrl/Cmd+Maj+B`; en document braille, la ligne active peut etre
-  envoyee a l'afficheur avec un en-tete tactile `points 1-2-3-7`, repere
-  `p#l#c#`, puis `points 4-5-6-8`, et un segment de comptage/limite des
-  caracteres de ligne (marqueur `4-5-6-8` au dernier emplacement configure).
+  raccourci `Ctrl/Cmd+Maj+B`; regles de capacite appliquees:
+  - option automatiquement indisponible sous `40` cellules ;
+  - les reperes tactiles `points 1-2-3-7` / `points 4-5-6-8` restent actifs ;
+  - exception sur afficheur `40` cellules: la section compteur
+    `points 1-2-3-7 x/y points 4-5-6-8` est retiree.
 - Passage de maintenance npm appliqué: dépendances de build migrées vers
   `electron@^45.1.0` et `electron-builder@^26.18.0`, audit npm final à
   `0 vulnerability`.
@@ -177,6 +178,19 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-10-31 : adaptation de la sortie afficheur braille a la capacite de
+  plage:
+  - renderer mis a jour pour desactiver automatiquement l'option d'affichage
+    externe si la capacite detectee (ou la configuration courante quand la
+    capacite n'est pas remontee) est inferieure a 40 cellules ;
+  - format tactile ajuste: les marqueurs `dots 1237` / `dots 4568` sont
+    conserves, avec une exception sur afficheur 40 cellules ou la section
+    `dots 1237 x/y dots 4568` est retiree ;
+  - messages d'etat UI completes pour expliciter la capacite detectee et le
+    mode de section compteur active/retiree.
+  Fichiers touches: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
 
 - 2026-10-29 : extension de la sortie afficheur braille a Windows (NVDA):
   - ajout du service `src/main/nvda-windows-service.js` (bindings JS via

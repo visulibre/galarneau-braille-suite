@@ -218,6 +218,8 @@ const BFU_STYLE_CLASS_BY_MARKUP_TAG = Object.freeze({
 const LINUX_BRLAPI_MARKER_LEFT = String.fromCodePoint(0x2847); // dots 1-2-3-7
 const LINUX_BRLAPI_MARKER_RIGHT = String.fromCodePoint(0x28b8); // dots 4-5-6-8
 const LINUX_BRLAPI_SYNC_DEBOUNCE_MS = 35;
+const BRAILLE_DISPLAY_MIN_COLUMNS = 40;
+const BRAILLE_DISPLAY_COUNTERLESS_COLUMNS = 40;
 
 function configureLiveRegion(element, variant) {
   if (!element) {
@@ -329,12 +331,99 @@ function normalizeLinuxBrlapiText(inputText) {
   return typeof inputText === "string" ? inputText.replace(/\r?\n/gu, " ") : "";
 }
 
-function buildLinuxBrlapiLimitSegment(lineText, charactersPerLine) {
+function getReportedBrailleDisplayColumns() {
+  if (!Number.isInteger(linuxBrlapiState.displayColumns)) {
+    return 0;
+  }
+
+  return Math.max(0, linuxBrlapiState.displayColumns);
+}
+
+function getFallbackBrailleDisplayColumns() {
+  if (state.documentConfig && Number.isInteger(state.documentConfig.charactersPerLine)) {
+    return Math.max(1, state.documentConfig.charactersPerLine);
+  }
+
+  if (charactersPerLineInput instanceof HTMLInputElement) {
+    const parsedValue = Number.parseInt(charactersPerLineInput.value, 10);
+    if (Number.isInteger(parsedValue) && parsedValue > 0) {
+      return parsedValue;
+    }
+  }
+
+  return 0;
+}
+
+function getBrailleDisplayAvailabilitySnapshot() {
+  const transportLabel = getBrailleDisplayTransportLabel();
+  const reportedDisplayColumns = getReportedBrailleDisplayColumns();
+  const fallbackDisplayColumns = getFallbackBrailleDisplayColumns();
+  const effectiveDisplayColumns =
+    reportedDisplayColumns > 0 ? reportedDisplayColumns : fallbackDisplayColumns;
+  const hasReportedDisplayColumns = reportedDisplayColumns > 0;
+  const isBelowMinimum =
+    effectiveDisplayColumns > 0 &&
+    effectiveDisplayColumns < BRAILLE_DISPLAY_MIN_COLUMNS;
+  const counterSegmentOmitted =
+    effectiveDisplayColumns === BRAILLE_DISPLAY_COUNTERLESS_COLUMNS;
+
+  if (!linuxBrlapiState.available) {
+    return {
+      available: false,
+      reason:
+        typeof linuxBrlapiState.reason === "string" && linuxBrlapiState.reason.length > 0
+          ? linuxBrlapiState.reason
+          : `${transportLabel} non disponible.`,
+      displayColumns: effectiveDisplayColumns,
+      hasReportedDisplayColumns,
+      counterSegmentOmitted,
+    };
+  }
+
+  if (isBelowMinimum) {
+    return {
+      available: false,
+      reason:
+        `Afficheur braille trop petit: ${effectiveDisplayColumns} cellule(s). ` +
+        `Minimum requis: ${BRAILLE_DISPLAY_MIN_COLUMNS}.`,
+      displayColumns: effectiveDisplayColumns,
+      hasReportedDisplayColumns,
+      counterSegmentOmitted,
+    };
+  }
+
+  return {
+    available: true,
+    reason: null,
+    displayColumns: effectiveDisplayColumns,
+    hasReportedDisplayColumns,
+    counterSegmentOmitted,
+  };
+}
+
+function shouldUseBrailleMarkersForDisplay() {
+  return true;
+}
+
+function buildLinuxBrlapiLimitSegment(lineText, charactersPerLine, options = {}) {
+  const { useMarkers = true, omitCounterSegment = false } = options;
   const safeCharactersPerLine = Number.isInteger(charactersPerLine)
     ? Math.max(1, charactersPerLine)
     : 1;
   const normalizedLineText = normalizeLinuxBrlapiText(lineText);
   const lineCharacters = Array.from(normalizedLineText);
+
+  if (!useMarkers) {
+    const visibleCharacterCount = Math.min(lineCharacters.length, safeCharactersPerLine);
+    const limitedCells = [];
+    for (let characterPosition = 1; characterPosition <= safeCharactersPerLine; characterPosition += 1) {
+      limitedCells.push(lineCharacters[characterPosition - 1] ?? " ");
+    }
+
+    const counterLabel = `${visibleCharacterCount}/${safeCharactersPerLine}`;
+    return `${counterLabel} ${limitedCells.join("")}`.trimEnd();
+  }
+
   const visibleCharacterCount = Math.min(lineCharacters.length, Math.max(0, safeCharactersPerLine - 1));
 
   const limitedCells = [];
@@ -347,9 +436,17 @@ function buildLinuxBrlapiLimitSegment(lineText, charactersPerLine) {
     limitedCells.push(lineCharacters[characterPosition - 1] ?? " ");
   }
 
+  if (omitCounterSegment) {
+    return `${LINUX_BRLAPI_MARKER_LEFT}${limitedCells.join("")}`;
+  }
+
   const counterLabel = `${visibleCharacterCount}/${safeCharactersPerLine}`;
   return `${LINUX_BRLAPI_MARKER_LEFT}${counterLabel}${LINUX_BRLAPI_MARKER_RIGHT} ` +
     `${LINUX_BRLAPI_MARKER_LEFT}${limitedCells.join("")}`;
+}
+
+function shouldOmitBrailleCounterSegment(displayColumns) {
+  return Number.isInteger(displayColumns) && displayColumns === BRAILLE_DISPLAY_COUNTERLESS_COLUMNS;
 }
 
 function buildLinuxBrlapiDisplayText(context) {
@@ -364,9 +461,17 @@ function buildLinuxBrlapiDisplayText(context) {
     : 1;
   const positionLabel = `p${pageIndex + 1}l${lineIndex + 1}c${characterIndex}`;
 
-  const header = `${LINUX_BRLAPI_MARKER_LEFT}${positionLabel}${LINUX_BRLAPI_MARKER_RIGHT}`;
-  const limitSegment = buildLinuxBrlapiLimitSegment(context.lineValue, context.charactersPerLine);
-  return `${header} ${limitSegment}`;
+  const useMarkers = shouldUseBrailleMarkersForDisplay();
+  const omitCounterSegment = shouldOmitBrailleCounterSegment(context.displayColumns);
+  const header = useMarkers
+    ? `${LINUX_BRLAPI_MARKER_LEFT}${positionLabel}${LINUX_BRLAPI_MARKER_RIGHT}`
+    : positionLabel;
+  const limitSegment = buildLinuxBrlapiLimitSegment(
+    context.lineValue,
+    context.charactersPerLine,
+    { useMarkers, omitCounterSegment },
+  );
+  return `${header} ${limitSegment}`.trim();
 }
 
 function updateLinuxBrlapiAvailabilityFromResponse(response) {
@@ -379,17 +484,19 @@ function updateLinuxBrlapiAvailabilityFromResponse(response) {
   linuxBrlapiState.available = response.available === true;
   linuxBrlapiState.displayColumns = Number.isInteger(response.displayColumns)
     ? Math.max(0, response.displayColumns)
-    : 0;
+    : linuxBrlapiState.displayColumns;
   linuxBrlapiState.displayRows = Number.isInteger(response.displayRows)
     ? Math.max(0, response.displayRows)
-    : 0;
+    : linuxBrlapiState.displayRows;
   linuxBrlapiState.reason =
     typeof response.reason === "string" && response.reason.length > 0
       ? response.reason
       : null;
 
-  if (!linuxBrlapiState.available) {
+  const availability = getBrailleDisplayAvailabilitySnapshot();
+  if (!availability.available && linuxBrlapiEnabled) {
     linuxBrlapiEnabled = false;
+    void clearLinuxBrlapiDisplay();
   }
 
   refreshLinuxBrlapiOptionsUI();
@@ -399,7 +506,13 @@ function refreshLinuxBrlapiOptionsUI() {
   const platform = getBrailleDisplayClientPlatform();
   const platformSupported = platform !== null;
   const transportLabel = getBrailleDisplayTransportLabel();
+  const availability = getBrailleDisplayAvailabilitySnapshot();
   const disableForCreationFlow = isCreateLoading || isCreateLocked || isFileBusy;
+
+  if (linuxBrlapiEnabled && !availability.available) {
+    linuxBrlapiEnabled = false;
+    void clearLinuxBrlapiDisplay();
+  }
 
   if (linuxBrlapiOptionsField instanceof HTMLElement) {
     linuxBrlapiOptionsField.hidden = !platformSupported;
@@ -410,7 +523,7 @@ function refreshLinuxBrlapiOptionsUI() {
     linuxBrlapiEnabledToggle.disabled =
       disableForCreationFlow ||
       !platformSupported ||
-      !linuxBrlapiState.available;
+      !availability.available;
   }
 
   if (linuxBrlapiStatus instanceof HTMLElement) {
@@ -419,25 +532,31 @@ function refreshLinuxBrlapiOptionsUI() {
       return;
     }
 
-    if (!linuxBrlapiState.available) {
-      const reason =
-        typeof linuxBrlapiState.reason === "string" && linuxBrlapiState.reason.length > 0
-          ? linuxBrlapiState.reason
-          : `${transportLabel} non disponible.`;
+    if (!availability.available) {
+      const reason = availability.reason ?? `${transportLabel} non disponible.`;
       linuxBrlapiStatus.textContent = `Indisponible: ${reason}`;
       return;
     }
 
+    const displaySizeLabel =
+      availability.displayColumns > 0
+        ? `${availability.displayColumns} cellule(s)`
+        : "taille non détectée";
+    const counterModeLabel = availability.counterSegmentOmitted
+      ? "Section points 1-2-3-7 x/y points 4-5-6-8 retirée (mode 40 cellules)."
+      : "Section points 1-2-3-7 x/y points 4-5-6-8 active.";
+
     linuxBrlapiStatus.textContent = linuxBrlapiEnabled
-      ? `Sortie ${transportLabel} active pour la ligne braille courante.`
-      : `Disponible (${transportLabel}). Active via la case ci-dessus ou Ctrl/Cmd+Maj+B.`;
+      ? `Sortie ${transportLabel} active (${displaySizeLabel}). ${counterModeLabel}`
+      : `Disponible (${transportLabel}, ${displaySizeLabel}). Active via la case ci-dessus ou Ctrl/Cmd+Maj+B.`;
   }
 }
 
 function notifyLinuxBrlapiUnavailable() {
+  const availability = getBrailleDisplayAvailabilitySnapshot();
   if (
     linuxBrlapiState.unavailableNotified ||
-    linuxBrlapiState.available ||
+    availability.available ||
     !linuxBrlapiEnabled
   ) {
     return;
@@ -445,10 +564,7 @@ function notifyLinuxBrlapiUnavailable() {
 
   linuxBrlapiState.unavailableNotified = true;
   const transportLabel = getBrailleDisplayTransportLabel();
-  const reason =
-    typeof linuxBrlapiState.reason === "string" && linuxBrlapiState.reason.length > 0
-      ? linuxBrlapiState.reason
-      : `Service ${transportLabel} indisponible.`;
+  const reason = availability.reason ?? `Service ${transportLabel} indisponible.`;
   setStatus(translationStatusMessage, `Sortie ${transportLabel} indisponible: ${reason}`, "neutral");
 }
 
@@ -463,14 +579,12 @@ function setLinuxBrlapiEnabled(isEnabled, options = {}) {
     return;
   }
 
-  if (nextEnabled && !linuxBrlapiState.available) {
+  const availability = getBrailleDisplayAvailabilitySnapshot();
+  if (nextEnabled && !availability.available) {
     linuxBrlapiEnabled = false;
     refreshLinuxBrlapiOptionsUI();
     if (announce) {
-      const reason =
-        typeof linuxBrlapiState.reason === "string" && linuxBrlapiState.reason.length > 0
-          ? linuxBrlapiState.reason
-          : `${transportLabel} est indisponible sur ce systeme.`;
+      const reason = availability.reason ?? `${transportLabel} est indisponible sur ce systeme.`;
       setStatus(documentStatusMessage, `Impossible d'activer la sortie braille externe: ${reason}`, "neutral");
     }
     return;
@@ -509,7 +623,9 @@ function toggleLinuxBrlapiEnabled(options = {}) {
 function flushLinuxBrlapiSync() {
   linuxBrlapiSyncTimerId = null;
 
-  if (!pendingLinuxBrlapiContext || !linuxBrlapiState.available || !linuxBrlapiEnabled) {
+  const availability = getBrailleDisplayAvailabilitySnapshot();
+
+  if (!pendingLinuxBrlapiContext || !availability.available || !linuxBrlapiEnabled) {
     return;
   }
 
@@ -548,7 +664,8 @@ function queueLinuxBrlapiSync(lineInput, linePosition, characterIndex) {
     return;
   }
 
-  if (!linuxBrlapiState.initialized || !linuxBrlapiState.available || !linuxBrlapiEnabled) {
+  const availability = getBrailleDisplayAvailabilitySnapshot();
+  if (!linuxBrlapiState.initialized || !availability.available || !linuxBrlapiEnabled) {
     return;
   }
 
@@ -558,6 +675,7 @@ function queueLinuxBrlapiSync(lineInput, linePosition, characterIndex) {
     characterIndex,
     lineValue: lineInput.value,
     charactersPerLine: state.documentConfig.charactersPerLine,
+    displayColumns: availability.displayColumns,
   };
 
   if (linuxBrlapiSyncTimerId !== null) {
@@ -728,6 +846,7 @@ function updateLineInputBfuVisualState(lineInput) {
 
 function refreshCreationFormState() {
   const disableForm = isCreateLoading || isCreateLocked || isFileBusy;
+  const displayAvailability = getBrailleDisplayAvailabilitySnapshot();
 
   documentTypeRadios.forEach((radio) => {
     if (radio instanceof HTMLInputElement) {
@@ -783,7 +902,7 @@ function refreshCreationFormState() {
     linuxBrlapiEnabledToggle.disabled =
       disableForm ||
       !isBrailleDisplayClientPlatform() ||
-      !linuxBrlapiState.available;
+      !displayAvailability.available;
   }
   createDocumentButton.disabled = disableForm;
   openDocumentButton.disabled = disableForm;
@@ -4842,6 +4961,10 @@ function onLinuxBrlapiEnabledToggleChange(event) {
   setLinuxBrlapiEnabled(toggle.checked);
 }
 
+function onCharactersPerLineInputChange() {
+  refreshLinuxBrlapiOptionsUI();
+}
+
 function onPageLayoutControlChange() {
   refreshPageLayoutControlState();
 }
@@ -5048,6 +5171,10 @@ if (realtimeTranslationToggle instanceof HTMLInputElement) {
 }
 if (showSpaceMarkersToggle instanceof HTMLInputElement) {
   showSpaceMarkersToggle.addEventListener("change", onShowSpaceMarkersToggleChange);
+}
+if (charactersPerLineInput instanceof HTMLInputElement) {
+  charactersPerLineInput.addEventListener("input", onCharactersPerLineInputChange);
+  charactersPerLineInput.addEventListener("change", onCharactersPerLineInputChange);
 }
 if (linuxBrlapiEnabledToggle instanceof HTMLInputElement) {
   linuxBrlapiEnabledToggle.addEventListener("change", onLinuxBrlapiEnabledToggleChange);

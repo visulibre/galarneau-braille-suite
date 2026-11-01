@@ -263,11 +263,13 @@ Le binaire non empaqueté est aussi disponible ici :
    Sous Linux (BRLAPI) ou Windows (NVDA), si le service d'afficheur est
    disponible, tu peux activer la sortie depuis les options du panneau
    **Créer un nouveau document** ou via `Ctrl/Cmd + Maj + B`. La ligne active
-   est alors envoyée vers l’afficheur
-   avec un en-tête tactile: points `1-2-3-7`, repère `p#l#c#`, puis points
-   `4-5-6-8`; ensuite un segment de comptage affiche la limite
-   `caractères/ligne` (exemple: à 30 caractères, le marqueur points `4-5-6-8`
-   est placé au 30e emplacement).
+   est alors envoyée vers l’afficheur.
+   Si la taille détectée de l’afficheur (ou la configuration courante quand la
+   taille n’est pas remontée) est inférieure à 40 cellules, l’option est
+   automatiquement désactivée.
+   Les repères tactiles points `1-2-3-7` / `4-5-6-8` restent utilisés pour
+   l’en-tête et la zone de ligne. Cas particulier: sur une plage de
+   40 cellules, la section `points 1-2-3-7 x/y points 4-5-6-8` est retirée.
 14. Cliquer sur **Traduire le document** (ou utiliser `Ctrl/Cmd + T`) pour un document normal.
 15. Si le document actif est un `.gnp` et que la traduction va vers le braille :
    - l’éditeur bascule automatiquement sur le contenu braille (le texte imprimé n’est plus la base d’édition active) ;
