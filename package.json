@@ -59,6 +59,7 @@
           ]
         }
       ],
+      "icon": "build/icons/app-icon.png",
       "category": "Utility",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },

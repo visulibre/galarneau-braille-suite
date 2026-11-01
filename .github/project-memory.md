@@ -39,6 +39,10 @@
   - build standard `npm run dist:win` (NSIS + ZIP) ;
   - build signe `npm run dist:win:signed` avec verification prealable des
     variables de certificat.
+- Packaging Linux outille:
+  - icone Linux dediee (`build/icons/app-icon.png`) derivee du SVG projet ;
+  - configuration `build.linux.icon` pour fiabiliser `npm run dist:linux`
+    (AppImage).
 - Chargement des tables `liblouis` validé en mode packagé
   (`app.asar.unpacked`).
 - Exécution AppImage: dépendance système `libfuse.so.2` requise, avec fallback
@@ -178,6 +182,15 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-10-31 : correction de build Linux AppImage:
+  - ajout de l'icone PNG Linux `build/icons/app-icon.png` (derivee de
+    `build/icons/app-icon.svg`) ;
+  - mise a jour de `package.json` (`build.linux.icon`) pour eviter l'erreur
+    `computeDesktopIcons` observee avec electron-builder ;
+  - build Linux relance avec succes (`npm run dist:linux`).
+  Fichiers touches: `package.json`, `build/icons/app-icon.png`,
+  `.github/project-memory.md`.
 
 - 2026-10-31 : adaptation de la sortie afficheur braille a la capacite de
   plage:
