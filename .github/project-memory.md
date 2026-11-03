@@ -105,6 +105,8 @@
   - les reperes tactiles `points 1-2-3-7` / `points 4-5-6-8` restent actifs ;
   - exception sur afficheur `40` cellules: la section compteur
     `points 1-2-3-7 x/y points 4-5-6-8` est retiree.
+  - curseur tactile `points 7-8` insere dans la ligne envoyee a l'afficheur
+    pour materialiser la position courante d'edition.
 - Passage de maintenance npm appliqué: dépendances de build migrées vers
   `electron@^45.1.0` et `electron-builder@^26.18.0`, audit npm final à
   `0 vulnerability`.
@@ -143,6 +145,9 @@
 - Mise en forme BFU (document normal `.gnp`) alignée sur les classes d’emphase
   liblouis (`bold`, `italic`, `underline`) avec vérification dynamique du
   support de la table active et messages d’état associés.
+- Balise de colonne braille persistante (`<cb#>`): insertion d'un décalage de
+  début de ligne (espaces braille) appliqué sur la ligne courante puis sur les
+  lignes suivantes tant que le bloc n'est pas fermé via `<cb>` ou `</cb>`.
 - En document normal (`.gnp`), zone d’édition large non contrainte par les
   paramètres braille (lignes/page, caractères/ligne).
 - En document braille (`.gnb`), retour automatique des mots: si une ligne
@@ -154,10 +159,22 @@
 - Navigation clavier verticale dédiée:
   - `Flèche haut` / `Flèche bas` ligne par ligne, avec accès aux lignes vides intermédiaires;
   - `Entrée` en normal (`.gnp`) coupe la ligne au curseur;
-  - `Entrée` en braille (`.gnb`) descend à la ligne suivante, sans entrer dans la zone vide de fin de contenu.
+  - `Entrée` en braille (`.gnb`) coupe aussi la ligne au curseur (texte après
+    curseur déplacé sur la ligne suivante).
+- Dans l’éditeur, la touche `Tab` est désactivée pour éviter le changement de
+  ligne par tabulation ; depuis une ligne de l’éditeur, `Tab` envoie le focus
+  vers les options d’édition (mode de saisie, espaces, traduction). Le flux de
+  contenu reste piloté par `Entrée` (découpe de ligne) et `Ctrl/Cmd+Entrée`
+  (saut de page forcé en `.gnp`).
 - Outil “Afficher les espaces” avec repère visuel `·` sur la ligne active.
-- Après centrage, curseur replacé au début de ligne pour vérifier les espaces
-  en tête (utile afficheur braille).
+- Après centrage (`Ctrl/Cmd+E`):
+  - en document normal (`.gnp`), curseur placé au début du texte centré pour
+    rendre le déplacement visible immédiatement ;
+  - en document braille (`.gnb`), curseur replacé au début de ligne pour
+    vérifier les espaces en tête (utile afficheur braille) ;
+  - en mode braille avec conversion texte→braille en temps réel, les espaces
+    de tête ajoutés par le centrage sont désormais conservés après
+    retraduction de la ligne.
 
 ## Fichiers clés
 
@@ -182,6 +199,65 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-11-03 : ajout de la balise de colonne braille persistante:
+  - prise en charge de `<cb#>` dans le pipeline de traduction pour appliquer un
+    décalage de début de ligne sur la ligne courante puis sur les nouvelles
+    lignes suivantes ;
+  - fermeture explicite via `<cb>` ou `</cb>` ;
+  - prise en charge en preview et en production (avec prétraitement avant
+    moteur natif quand aucun style BFU n'est présent).
+  Fichiers touches: `src/main/braille-service.js`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-11-03 : amélioration du retour tactile sur afficheur braille externe:
+  - ajout d'un marqueur curseur `points 7-8` dans la ligne transmise (BRLAPI
+    Linux et NVDA Windows via la meme sortie renderer), positionne selon le
+    curseur courant de la ligne active ;
+  - statuts UI et README mis a jour pour decrire ce marqueur.
+  Fichiers touches: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-11-03 : navigation Tab depuis l’éditeur:
+  - `Tab` depuis une ligne de l’éditeur redirige désormais le focus vers les
+    options d’édition (mode de saisie en priorité), au lieu d’un blocage sec ;
+  - comportement demandé pour atteindre rapidement les options comme
+    "clavier braille".
+  Fichiers touches: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-11-03 : harmonisation de `Entrée` en édition de ligne:
+  - `Entrée` coupe désormais la ligne active à la position du curseur en
+    `.gnp` **et** en `.gnb`, avec déplacement du texte après curseur vers la
+    ligne suivante ;
+  - en braille avec conversion texte→braille en temps réel, l'index de coupe
+    est projeté depuis la position du curseur affichée vers la source texte
+    avant recalcul des lignes braille.
+  Fichiers touches: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-11-03 : verrouillage clavier de l’éditeur sur la navigation demandée:
+  - désactivation explicite de `Tab` dans les lignes éditables pour empêcher
+    le changement de ligne par tabulation ;
+  - maintien du flux principal sur `Entrée` et `Ctrl/Cmd+Entrée`.
+  Fichiers touches: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-11-03 : correctif du centrage en document braille (`Ctrl/Cmd+E`):
+  - synchronisation du buffer source avant l'événement `input`
+    programmatique pour éviter qu'une retraduction texte→braille efface les
+    espaces de tête ajoutés par le centrage ;
+  - résultat: les espaces de centrage restent visibles en document braille.
+  Fichiers touches: `src/renderer/app.js`, `.github/project-memory.md`.
+
+- 2026-11-03 : amélioration UX du centrage `Ctrl/Cmd+E`:
+  - en document normal (`.gnp`), après centrage, le curseur est placé sur le
+    début du texte centré au lieu de rester au début absolu de la ligne,
+    afin de rendre le déplacement visuel plus évident ;
+  - en document braille (`.gnb`), le comportement précédent est conservé
+    (curseur au début de ligne) pour le contrôle des espaces de tête.
+  Fichiers touches: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
 
 - 2026-10-31 : correction de build Linux AppImage:
   - ajout de l'icone PNG Linux `build/icons/app-icon.png` (derivee de

@@ -217,6 +217,7 @@ const BFU_STYLE_CLASS_BY_MARKUP_TAG = Object.freeze({
 });
 const LINUX_BRLAPI_MARKER_LEFT = String.fromCodePoint(0x2847); // dots 1-2-3-7
 const LINUX_BRLAPI_MARKER_RIGHT = String.fromCodePoint(0x28b8); // dots 4-5-6-8
+const LINUX_BRLAPI_CURSOR_MARKER = String.fromCodePoint(0x28c0); // dots 7-8
 const LINUX_BRLAPI_SYNC_DEBOUNCE_MS = 35;
 const BRAILLE_DISPLAY_MIN_COLUMNS = 40;
 const BRAILLE_DISPLAY_COUNTERLESS_COLUMNS = 40;
@@ -405,36 +406,55 @@ function shouldUseBrailleMarkersForDisplay() {
   return true;
 }
 
+function buildLineCharactersWithCursorMarker(lineCharacters, cursorOffset) {
+  const safeLineCharacters = Array.isArray(lineCharacters) ? lineCharacters : [];
+  const safeCursorOffset = Number.isInteger(cursorOffset)
+    ? Math.max(0, cursorOffset)
+    : safeLineCharacters.length;
+  const insertionIndex = Math.min(safeCursorOffset, safeLineCharacters.length);
+
+  return [
+    ...safeLineCharacters.slice(0, insertionIndex),
+    LINUX_BRLAPI_CURSOR_MARKER,
+    ...safeLineCharacters.slice(insertionIndex),
+  ];
+}
+
 function buildLinuxBrlapiLimitSegment(lineText, charactersPerLine, options = {}) {
-  const { useMarkers = true, omitCounterSegment = false } = options;
+  const {
+    useMarkers = true,
+    omitCounterSegment = false,
+    cursorOffset = null,
+  } = options;
   const safeCharactersPerLine = Number.isInteger(charactersPerLine)
     ? Math.max(1, charactersPerLine)
     : 1;
   const normalizedLineText = normalizeLinuxBrlapiText(lineText);
   const lineCharacters = Array.from(normalizedLineText);
+  const lineCharactersWithCursor = buildLineCharactersWithCursorMarker(
+    lineCharacters,
+    cursorOffset,
+  );
 
   if (!useMarkers) {
     const visibleCharacterCount = Math.min(lineCharacters.length, safeCharactersPerLine);
     const limitedCells = [];
     for (let characterPosition = 1; characterPosition <= safeCharactersPerLine; characterPosition += 1) {
-      limitedCells.push(lineCharacters[characterPosition - 1] ?? " ");
+      limitedCells.push(lineCharactersWithCursor[characterPosition - 1] ?? " ");
     }
 
     const counterLabel = `${visibleCharacterCount}/${safeCharactersPerLine}`;
     return `${counterLabel} ${limitedCells.join("")}`.trimEnd();
   }
 
-  const visibleCharacterCount = Math.min(lineCharacters.length, Math.max(0, safeCharactersPerLine - 1));
+  const lineContentCellCount = Math.max(0, safeCharactersPerLine - 1);
+  const visibleCharacterCount = Math.min(lineCharacters.length, lineContentCellCount);
 
   const limitedCells = [];
-  for (let characterPosition = 1; characterPosition <= safeCharactersPerLine; characterPosition += 1) {
-    if (characterPosition === safeCharactersPerLine) {
-      limitedCells.push(LINUX_BRLAPI_MARKER_RIGHT);
-      continue;
-    }
-
-    limitedCells.push(lineCharacters[characterPosition - 1] ?? " ");
+  for (let characterPosition = 1; characterPosition <= lineContentCellCount; characterPosition += 1) {
+    limitedCells.push(lineCharactersWithCursor[characterPosition - 1] ?? " ");
   }
+  limitedCells.push(LINUX_BRLAPI_MARKER_RIGHT);
 
   if (omitCounterSegment) {
     return `${LINUX_BRLAPI_MARKER_LEFT}${limitedCells.join("")}`;
@@ -469,7 +489,7 @@ function buildLinuxBrlapiDisplayText(context) {
   const limitSegment = buildLinuxBrlapiLimitSegment(
     context.lineValue,
     context.charactersPerLine,
-    { useMarkers, omitCounterSegment },
+    { useMarkers, omitCounterSegment, cursorOffset: context.cursorOffset },
   );
   return `${header} ${limitSegment}`.trim();
 }
@@ -545,9 +565,10 @@ function refreshLinuxBrlapiOptionsUI() {
     const counterModeLabel = availability.counterSegmentOmitted
       ? "Section points 1-2-3-7 x/y points 4-5-6-8 retirée (mode 40 cellules)."
       : "Section points 1-2-3-7 x/y points 4-5-6-8 active.";
+    const cursorModeLabel = "Curseur tactile points 7-8 actif dans la ligne envoyée.";
 
     linuxBrlapiStatus.textContent = linuxBrlapiEnabled
-      ? `Sortie ${transportLabel} active (${displaySizeLabel}). ${counterModeLabel}`
+      ? `Sortie ${transportLabel} active (${displaySizeLabel}). ${counterModeLabel} ${cursorModeLabel}`
       : `Disponible (${transportLabel}, ${displaySizeLabel}). Active via la case ci-dessus ou Ctrl/Cmd+Maj+B.`;
   }
 }
@@ -673,6 +694,7 @@ function queueLinuxBrlapiSync(lineInput, linePosition, characterIndex) {
     pageIndex: linePosition.pageIndex,
     lineIndex: linePosition.lineIndex,
     characterIndex,
+    cursorOffset: lineInput.selectionStart ?? lineInput.value.length,
     lineValue: lineInput.value,
     charactersPerLine: state.documentConfig.charactersPerLine,
     displayColumns: availability.displayColumns,
@@ -1857,6 +1879,55 @@ function isLineInput(element) {
   return element instanceof HTMLInputElement && element.classList.contains("line-input");
 }
 
+function isEditorOptionFocusable(element) {
+  if (!(element instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (element.hidden) {
+    return false;
+  }
+
+  if (
+    (element instanceof HTMLInputElement ||
+      element instanceof HTMLButtonElement ||
+      element instanceof HTMLSelectElement ||
+      element instanceof HTMLTextAreaElement) &&
+    element.disabled
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function focusEditorOptionsFromLineInput() {
+  const checkedInputMode = [...inputModeRadios].find(
+    (radio) => radio instanceof HTMLInputElement && radio.checked && isEditorOptionFocusable(radio),
+  );
+
+  if (checkedInputMode instanceof HTMLInputElement) {
+    checkedInputMode.focus();
+    return true;
+  }
+
+  const optionTargets = [
+    ...inputModeRadios,
+    showSpaceMarkersToggle,
+    realtimeTranslationToggle,
+    ...directionRadios,
+    translateButton,
+  ];
+
+  const firstFocusableOption = optionTargets.find((target) => isEditorOptionFocusable(target));
+  if (!(firstFocusableOption instanceof HTMLElement)) {
+    return false;
+  }
+
+  firstFocusableOption.focus();
+  return true;
+}
+
 function getLinePositionFromInput(lineInput) {
   const pageIndex = Number.parseInt(lineInput.dataset.pageIndex ?? "", 10);
   const lineIndex = Number.parseInt(lineInput.dataset.lineIndex ?? "", 10);
@@ -2952,6 +3023,7 @@ function focusLineByRelativeOffset(lineInput, offset, options = {}) {
     keepColumn = true,
     createWhenMissing = false,
     preventTrailingEmpty = false,
+    targetCaret = null,
   } = options;
 
   const linePosition = getLinePositionFromInput(lineInput);
@@ -3008,9 +3080,12 @@ function focusLineByRelativeOffset(lineInput, offset, options = {}) {
 
   const sourceSelectionStart = lineInput.selectionStart ?? lineInput.value.length;
   targetLineInput.focus();
-  const nextCaret = keepColumn
-    ? Math.min(sourceSelectionStart, targetLineInput.value.length)
-    : targetLineInput.value.length;
+  const hasExplicitTargetCaret = Number.isInteger(targetCaret);
+  const nextCaret = hasExplicitTargetCaret
+    ? Math.max(0, Math.min(targetCaret, targetLineInput.value.length))
+    : keepColumn
+      ? Math.min(sourceSelectionStart, targetLineInput.value.length)
+      : targetLineInput.value.length;
   targetLineInput.setSelectionRange(nextCaret, nextCaret);
   updateLinePositionLabel(targetLineInput);
   updateLineCharacterCounter(targetLineInput);
@@ -3034,26 +3109,6 @@ function splitCurrentNormalLineAtCaret(lineInput) {
   const selectionEnd = lineInput.selectionEnd ?? selectionStart;
   const currentLineValue = lineInput.value;
 
-  if (selectionStart === selectionEnd && selectionStart >= currentLineValue.length) {
-    const nextFlatIndex = currentFlatIndex + 1;
-    if (nextFlatIndex >= currentLines.length) {
-      return false;
-    }
-
-    const nextLineValue = currentLines[nextFlatIndex] ?? "";
-    if (isEditorLineEmpty(nextLineValue)) {
-      const hasFollowingNonEmptyLine =
-        findNextNonEmptyFlatLineIndex(currentLines, nextFlatIndex + 1, 1) !== null;
-      if (!hasFollowingNonEmptyLine) {
-        return false;
-      }
-    }
-
-    focusLineByFlatIndex(nextFlatIndex, 0);
-    refreshActiveLineSpacePreview();
-    return true;
-  }
-
   const leftPart = currentLineValue.slice(0, selectionStart);
   const rightPart = currentLineValue.slice(selectionEnd);
   currentLines[currentFlatIndex] = leftPart;
@@ -3065,15 +3120,7 @@ function splitCurrentNormalLineAtCaret(lineInput) {
   const sourceBufferSnapshot = buildSourceBufferFromDisplayLines();
   renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
 
-  const nextNonEmptyFlatIndex = rightPart.length > 0
-    ? currentFlatIndex + 1
-    : findNextNonEmptyFlatLineIndex(currentLines, currentFlatIndex + 2, 1);
-
-  if (nextNonEmptyFlatIndex !== null) {
-    focusLineByFlatIndex(nextNonEmptyFlatIndex, 0);
-  } else {
-    focusLineByFlatIndex(currentFlatIndex, leftPart.length);
-  }
+  focusLineByFlatIndex(currentFlatIndex + 1, 0);
 
   refreshActiveLineSpacePreview();
   refreshAllActionStates();
@@ -3087,6 +3134,167 @@ function splitCurrentNormalLineAtCaret(lineInput) {
       "neutral",
     );
   }
+
+  return true;
+}
+
+async function resolveSourceIndexFromDisplayCaret(sourceLine, displayCaret, translationCache = null) {
+  const normalizedSourceLine = typeof sourceLine === "string" ? sourceLine : "";
+  if (normalizedSourceLine.length === 0) {
+    return 0;
+  }
+
+  const safeDisplayCaret = Number.isInteger(displayCaret)
+    ? Math.max(0, displayCaret)
+    : 0;
+  if (safeDisplayCaret <= 0) {
+    return 0;
+  }
+
+  const fullLineDisplay = await translateBrailleTextLine(normalizedSourceLine, translationCache);
+  if (safeDisplayCaret >= fullLineDisplay.length) {
+    return normalizedSourceLine.length;
+  }
+
+  let low = 0;
+  let high = normalizedSourceLine.length;
+  let bestSourceIndex = 0;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidateSource = normalizedSourceLine.slice(0, mid);
+    const candidateDisplay = await translateBrailleTextLine(candidateSource, translationCache);
+
+    if (candidateDisplay.length <= safeDisplayCaret) {
+      bestSourceIndex = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return bestSourceIndex;
+}
+
+async function splitCurrentBrailleLineAtCaret(lineInput) {
+  if (!state.documentConfig || state.documentType !== DOCUMENT_TYPE_BRAILLE) {
+    return false;
+  }
+
+  const linePosition = getLinePositionFromInput(lineInput);
+  if (!linePosition) {
+    return false;
+  }
+
+  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  const selectionStart = lineInput.selectionStart ?? lineInput.value.length;
+  const selectionEnd = lineInput.selectionEnd ?? selectionStart;
+
+  if (shouldTranslateLineToBrailleInPlace()) {
+    const lineWidth = state.documentConfig.charactersPerLine;
+    const currentDisplayLines = flattenDocumentLines();
+    const sourceLines = readSourceBufferLines(currentDisplayLines.length);
+
+    while (sourceLines.length <= currentFlatIndex) {
+      sourceLines.push("");
+      currentDisplayLines.push("");
+    }
+
+    const currentSourceLine = sourceLines[currentFlatIndex] ?? "";
+    const currentDisplayLine = currentDisplayLines[currentFlatIndex] ?? "";
+
+    nextLineTranslationRequestId(lineInput.id);
+
+    try {
+      const translationCache = new Map();
+      const sourceStartIndex = await resolveSourceIndexFromDisplayCaret(
+        currentSourceLine,
+        selectionStart,
+        translationCache,
+      );
+      const sourceEndIndex = await resolveSourceIndexFromDisplayCaret(
+        currentSourceLine,
+        selectionEnd,
+        translationCache,
+      );
+
+      const safeSourceStartIndex = Math.max(0, Math.min(sourceStartIndex, currentSourceLine.length));
+      const safeSourceEndIndex = Math.max(
+        safeSourceStartIndex,
+        Math.min(sourceEndIndex, currentSourceLine.length),
+      );
+
+      const leftSourcePart = currentSourceLine.slice(0, safeSourceStartIndex);
+      const rightSourcePart = currentSourceLine.slice(safeSourceEndIndex);
+      sourceLines[currentFlatIndex] = leftSourcePart;
+      sourceLines.splice(currentFlatIndex + 1, 0, rightSourcePart);
+
+      const leftDisplayPart = currentDisplayLine.slice(0, selectionStart);
+      const rightDisplayPart = currentDisplayLine.slice(selectionEnd);
+      const displaySeedLines = currentDisplayLines.slice();
+      displaySeedLines[currentFlatIndex] = leftDisplayPart;
+      displaySeedLines.splice(currentFlatIndex + 1, 0, rightDisplayPart);
+
+      const wrapResult = await wrapBrailleSourceLinesByDisplayWidth(
+        sourceLines,
+        displaySeedLines,
+        currentFlatIndex,
+        lineWidth,
+      );
+
+      state.pages = buildPagesFromFlatLines(wrapResult.displayLines);
+      markDocumentChanged();
+
+      writeSourceBufferLines(wrapResult.sourceLines);
+      const sourceBufferSnapshot = new Map(lineSourceTextById);
+      renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+
+      focusLineByFlatIndex(currentFlatIndex + 1, 0);
+      refreshActiveLineSpacePreview();
+      refreshAllActionStates();
+
+      return true;
+    } catch (error) {
+      setStatus(
+        translationStatusMessage,
+        `Traduction instantanée indisponible: ${getErrorMessage(error)}`,
+        "error",
+      );
+      return false;
+    }
+  }
+
+  const currentDisplayLines = flattenDocumentLines();
+  const sourceLines = readSourceBufferLines(currentDisplayLines.length);
+  while (sourceLines.length <= currentFlatIndex) {
+    sourceLines.push("");
+  }
+
+  const currentDisplayLine = currentDisplayLines[currentFlatIndex] ?? "";
+  const currentSourceLine = sourceLines[currentFlatIndex] ?? currentDisplayLine;
+
+  const leftDisplayPart = currentDisplayLine.slice(0, selectionStart);
+  const rightDisplayPart = currentDisplayLine.slice(selectionEnd);
+  currentDisplayLines[currentFlatIndex] = leftDisplayPart;
+  currentDisplayLines.splice(currentFlatIndex + 1, 0, rightDisplayPart);
+
+  const safeSourceStartIndex = Math.max(0, Math.min(selectionStart, currentSourceLine.length));
+  const safeSourceEndIndex = Math.max(safeSourceStartIndex, Math.min(selectionEnd, currentSourceLine.length));
+  const leftSourcePart = currentSourceLine.slice(0, safeSourceStartIndex);
+  const rightSourcePart = currentSourceLine.slice(safeSourceEndIndex);
+  sourceLines[currentFlatIndex] = leftSourcePart;
+  sourceLines.splice(currentFlatIndex + 1, 0, rightSourcePart);
+
+  state.pages = buildPagesFromFlatLines(currentDisplayLines);
+  markDocumentChanged();
+
+  writeSourceBufferLines(sourceLines);
+  const sourceBufferSnapshot = new Map(lineSourceTextById);
+  renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+
+  focusLineByFlatIndex(currentFlatIndex + 1, 0);
+  refreshActiveLineSpacePreview();
+  refreshAllActionStates();
 
   return true;
 }
@@ -3176,6 +3384,26 @@ function onLineNavigationKeyDown(event) {
     return;
   }
 
+  if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();
+
+    if (focusEditorOptionsFromLineInput()) {
+      setStatus(
+        documentStatusMessage,
+        "Focus déplacé vers les options d’édition (mode de saisie, espaces, traduction).",
+        "neutral",
+      );
+      return;
+    }
+
+    setStatus(
+      documentStatusMessage,
+      "Aucune option d’édition disponible pour déplacer le focus.",
+      "neutral",
+    );
+    return;
+  }
+
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === "Enter") {
     event.preventDefault();
     if (state.documentType !== DOCUMENT_TYPE_NORMAL) {
@@ -3242,11 +3470,7 @@ function onLineNavigationKeyDown(event) {
       return;
     }
 
-    focusLineByRelativeOffset(lineInput, 1, {
-      keepColumn: false,
-      createWhenMissing: false,
-      preventTrailingEmpty: true,
-    });
+    void splitCurrentBrailleLineAtCaret(lineInput);
   }
 }
 
@@ -3439,6 +3663,40 @@ function countLeadingSpaces(lineValue) {
   }
 
   return leadingSpaces;
+}
+
+function focusCenteredLineInput(lineInput, centeredValue) {
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const leadingSpaces = countLeadingSpaces(centeredValue);
+  lineInput.focus();
+
+  if (state.documentType === DOCUMENT_TYPE_BRAILLE) {
+    lineInput.setSelectionRange(0, 0);
+    lineInput.scrollLeft = 0;
+    return;
+  }
+
+  lineInput.setSelectionRange(leadingSpaces, leadingSpaces);
+}
+
+function syncCenteredSourceLineForBrailleInPlace(lineInput, centeredValue) {
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  if (!shouldTranslateLineToBrailleInPlace()) {
+    return;
+  }
+
+  const existingSourceLine = lineSourceTextById.get(lineInput.id) ?? "";
+  const centeredLeadingSpaces = countLeadingSpaces(centeredValue);
+  const centeredSourceLine =
+    `${" ".repeat(centeredLeadingSpaces)}${existingSourceLine.trim()}`;
+
+  lineSourceTextById.set(lineInput.id, centeredSourceLine);
 }
 
 function findLineInputByPosition(linePosition) {
@@ -4109,22 +4367,21 @@ function onCenterActiveLine() {
 
   if (centeredValue === targetLineInput.value) {
     const leadingSpaces = countLeadingSpaces(centeredValue);
+    focusCenteredLineInput(targetLineInput, centeredValue);
     setStatus(
       documentStatusMessage,
-      `La ligne active est déjà centrée (${leadingSpaces} espace(s) en début de ligne).`,
+      state.documentType === DOCUMENT_TYPE_BRAILLE
+        ? `La ligne active est déjà centrée (${leadingSpaces} espace(s) en début de ligne).`
+        : `La ligne active est déjà centrée (${leadingSpaces} espace(s) en début de ligne, curseur placé sur le texte).`,
       "neutral",
     );
-    targetLineInput.focus();
-    targetLineInput.setSelectionRange(0, 0);
-    targetLineInput.scrollLeft = 0;
     return;
   }
 
   targetLineInput.value = centeredValue;
+  syncCenteredSourceLineForBrailleInPlace(targetLineInput, centeredValue);
   targetLineInput.dispatchEvent(new Event("input", { bubbles: true }));
-  targetLineInput.focus();
-  targetLineInput.setSelectionRange(0, 0);
-  targetLineInput.scrollLeft = 0;
+  focusCenteredLineInput(targetLineInput, centeredValue);
 
   const linePosition = getLinePositionFromInput(targetLineInput);
   const leadingSpaces = countLeadingSpaces(centeredValue);
@@ -4133,7 +4390,9 @@ function onCenterActiveLine() {
     : "ligne active";
   setStatus(
     documentStatusMessage,
-    `Centrage appliqué à la ${positionDescription} (${leadingSpaces} espace(s) en début de ligne).`,
+    state.documentType === DOCUMENT_TYPE_BRAILLE
+      ? `Centrage appliqué à la ${positionDescription} (${leadingSpaces} espace(s) en début de ligne).`
+      : `Centrage appliqué à la ${positionDescription} (${leadingSpaces} espace(s) en début de ligne, curseur placé sur le texte).`,
     "success",
   );
 }

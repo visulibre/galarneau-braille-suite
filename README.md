@@ -240,8 +240,12 @@ Le binaire non empaqueté est aussi disponible ici :
    page déborde, une nouvelle page est créée automatiquement.
 7. Pour centrer un titre, place le curseur sur sa ligne puis utilise
    **Centrer la ligne active**.
-   Après centrage, le curseur revient au début de la ligne pour permettre de
-   vérifier immédiatement les espaces de tête (utile avec un afficheur braille).
+    Après centrage:
+    - en document normal (`.gnp`), le curseur se place sur le début du texte
+       centré pour rendre le déplacement immédiatement visible;
+    - en document braille (`.gnb`), le curseur revient au début de la ligne
+       pour vérifier immédiatement les espaces de tête (utile avec un afficheur
+       braille).
 8. Si besoin, active **Afficher les espaces avec des points (·)** pour voir
    clairement les espaces dans la ligne active sans modifier le texte.
 9. Enregistrer le document avec **Enregistrer le document**.
@@ -270,7 +274,14 @@ Le binaire non empaqueté est aussi disponible ici :
    Les repères tactiles points `1-2-3-7` / `4-5-6-8` restent utilisés pour
    l’en-tête et la zone de ligne. Cas particulier: sur une plage de
    40 cellules, la section `points 1-2-3-7 x/y points 4-5-6-8` est retirée.
+   Un curseur tactile `points 7-8` est inséré dans la ligne affichée après
+   la position courante pour matérialiser où se trouve l’édition.
 14. Cliquer sur **Traduire le document** (ou utiliser `Ctrl/Cmd + T`) pour un document normal.
+   Dans l’éditeur, la touche `Tab` déplace le focus vers les options
+   d’édition (mode de saisie, espaces, traduction, etc.).
+   Utilise `Entrée` pour couper la ligne active à la position du curseur (le
+   texte après curseur passe à la ligne suivante) et `Ctrl/Cmd + Entrée` pour
+   insérer un saut de page forcé (document normal `.gnp`).
 15. Si le document actif est un `.gnp` et que la traduction va vers le braille :
    - l’éditeur bascule automatiquement sur le contenu braille (le texte imprimé n’est plus la base d’édition active) ;
    - le contenu est redimensionné selon les paramètres braille choisis (caractères/ligne et lignes/page) ;
@@ -318,6 +329,23 @@ Compatibilité moteur: si la classe `underline` est déclarée par la table mais
 n’émet pas d’indicateur visible avec la version liblouis active, l’application
 applique un fallback sur la classe `italic` pour conserver un marquage BFU
 explicite du texte souligné/surligné.
+
+### Bloc de colonne braille (`<cb#>`)
+
+En document normal (`.gnp`) et dans la traduction braille, tu peux imposer un
+décalage persistant en début de ligne avec la balise `cb` :
+
+- `&lt;cb12&gt;` : active un décalage de 12 caractères braille vides en début de
+   ligne ;
+- tant que le bloc est actif, chaque nouvelle ligne commence avec ce même
+   décalage ;
+- `&lt;cb&gt;` ou `&lt;/cb&gt;` : ferme le bloc et arrête ce décalage persistant.
+
+Notes:
+
+- la valeur `#` est bornée entre `0` et `120` ;
+- les balises `cb` ne sont pas envoyées au traducteur telles quelles: elles
+   sont interprétées puis retirées.
 
 ### Références de conformité BFU
 
@@ -374,7 +402,7 @@ Le menu **Édition** contient aussi :
 - `Ctrl/Cmd + U` : appliquer le surlignage BFU à la sélection de la ligne active
 - `Flèche haut` / `Flèche bas` : monter / descendre d’une ligne (les lignes vides intermédiaires sont accessibles)
 - `Entrée` en document normal (`.gnp`) : couper la ligne active à la position du curseur
-- `Entrée` en document braille (`.gnb`) : aller à la ligne suivante, sans entrer dans les lignes vides de fin de contenu
+- `Entrée` en document braille (`.gnb`) : couper la ligne active à la position du curseur (le texte après curseur passe à la ligne suivante)
 
 ### Saisie braille au clavier (8 points)
 
@@ -481,8 +509,8 @@ Pour chaque lecteur, vérifier les points suivants :
 17. Vérifier que `Flèche haut`/`Flèche bas` déplacent bien le focus ligne par
    ligne, y compris sur les lignes vides intermédiaires.
 18. Vérifier que `Entrée` coupe bien la ligne en document normal (`.gnp`) et
-   qu’en document braille (`.gnb`), le focus va bien vers la ligne suivante
-   sans entrer dans des lignes vides en fin de contenu.
+   en document braille (`.gnb`), avec déplacement du texte après curseur vers
+   la ligne suivante dans les deux cas.
 
 Environnements recommandés :
 

@@ -82,6 +82,8 @@ const BFU_STYLE_CLASS_BY_MARKUP_TAG = Object.freeze({
   surlignage: "underline",
   surlignement: "underline",
 });
+const BRAILLE_COLUMN_BLOCK_TAG_NAME = "cb";
+const BRAILLE_COLUMN_BLOCK_MAX_INDENT = 120;
 
 let isTableLoadingReady = false;
 let tableLoadingFailure = null;
@@ -442,7 +444,85 @@ function parseMarkupTagAt(inputText, startIndex) {
   };
 }
 
+function parseColumnBlockTagAt(inputText, startIndex) {
+  if (inputText[startIndex] !== "<") {
+    return null;
+  }
+
+  const closingBracketIndex = inputText.indexOf(">", startIndex + 1);
+  if (closingBracketIndex === -1) {
+    return null;
+  }
+
+  const rawTagContent = inputText
+    .slice(startIndex + 1, closingBracketIndex)
+    .trim()
+    .toLowerCase();
+  if (rawTagContent.length === 0) {
+    return null;
+  }
+
+  if (rawTagContent === BRAILLE_COLUMN_BLOCK_TAG_NAME || rawTagContent === `/${BRAILLE_COLUMN_BLOCK_TAG_NAME}`) {
+    return {
+      isClosingTag: true,
+      indentSize: 0,
+      length: closingBracketIndex - startIndex + 1,
+    };
+  }
+
+  const openTagMatch = /^cb\s*(\d{1,3})$/u.exec(rawTagContent);
+  if (!openTagMatch) {
+    return null;
+  }
+
+  const requestedIndent = Number.parseInt(openTagMatch[1], 10);
+  const safeIndent = Math.max(0, Math.min(requestedIndent, BRAILLE_COLUMN_BLOCK_MAX_INDENT));
+
+  return {
+    isClosingTag: false,
+    indentSize: safeIndent,
+    length: closingBracketIndex - startIndex + 1,
+  };
+}
+
+function appendComputedCharacter(characters, styleFlags, character, activeStyleDepth) {
+  characters.push(character);
+
+  let internalFlags = 0;
+  if (activeStyleDepth.italic > 0) {
+    internalFlags |= INTERNAL_STYLE_FLAGS.italic;
+  }
+  if (activeStyleDepth.underline > 0) {
+    internalFlags |= INTERNAL_STYLE_FLAGS.underline;
+  }
+  if (activeStyleDepth.bold > 0) {
+    internalFlags |= INTERNAL_STYLE_FLAGS.bold;
+  }
+  styleFlags.push(internalFlags);
+}
+
+function appendColumnIndentPadding(characters, styleFlags, lineColumnIndex, targetIndentSize) {
+  let nextLineColumnIndex = lineColumnIndex;
+
+  if (!Number.isInteger(targetIndentSize) || targetIndentSize <= nextLineColumnIndex) {
+    return nextLineColumnIndex;
+  }
+
+  const paddingSize = targetIndentSize - nextLineColumnIndex;
+  for (let offset = 0; offset < paddingSize; offset += 1) {
+    characters.push(" ");
+    styleFlags.push(0);
+    nextLineColumnIndex += 1;
+  }
+
+  return nextLineColumnIndex;
+}
+
 function parseTextWithBfuStyleMarkers(inputText) {
+  const normalizedInputText =
+    typeof inputText === "string"
+      ? inputText.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n")
+      : "";
   const plainTextCharacters = [];
   const internalStyleFlagsByChar = [];
   const activeStyleDepth = {
@@ -450,11 +530,33 @@ function parseTextWithBfuStyleMarkers(inputText) {
     underline: 0,
     bold: 0,
   };
+  let activeColumnIndent = null;
+  let currentLineColumnIndex = 0;
 
   let hasBfuStyleMarkers = false;
+  let hasColumnIndentMarkers = false;
 
-  for (let index = 0; index < inputText.length; index += 1) {
-    const styleTag = parseMarkupTagAt(inputText, index);
+  for (let index = 0; index < normalizedInputText.length; index += 1) {
+    const columnIndentTag = parseColumnBlockTagAt(normalizedInputText, index);
+    if (columnIndentTag) {
+      hasColumnIndentMarkers = true;
+      if (columnIndentTag.isClosingTag) {
+        activeColumnIndent = null;
+      } else {
+        activeColumnIndent = columnIndentTag.indentSize;
+        currentLineColumnIndex = appendColumnIndentPadding(
+          plainTextCharacters,
+          internalStyleFlagsByChar,
+          currentLineColumnIndex,
+          activeColumnIndent,
+        );
+      }
+
+      index += columnIndentTag.length - 1;
+      continue;
+    }
+
+    const styleTag = parseMarkupTagAt(normalizedInputText, index);
     if (styleTag) {
       hasBfuStyleMarkers = true;
       if (styleTag.isClosingTag) {
@@ -470,25 +572,34 @@ function parseTextWithBfuStyleMarkers(inputText) {
       continue;
     }
 
-    plainTextCharacters.push(inputText[index]);
+    const currentCharacter = normalizedInputText[index];
+    appendComputedCharacter(
+      plainTextCharacters,
+      internalStyleFlagsByChar,
+      currentCharacter,
+      activeStyleDepth,
+    );
 
-    let internalFlags = 0;
-    if (activeStyleDepth.italic > 0) {
-      internalFlags |= INTERNAL_STYLE_FLAGS.italic;
+    if (currentCharacter === "\n") {
+      currentLineColumnIndex = 0;
+      if (activeColumnIndent !== null) {
+        currentLineColumnIndex = appendColumnIndentPadding(
+          plainTextCharacters,
+          internalStyleFlagsByChar,
+          currentLineColumnIndex,
+          activeColumnIndent,
+        );
+      }
+    } else {
+      currentLineColumnIndex += 1;
     }
-    if (activeStyleDepth.underline > 0) {
-      internalFlags |= INTERNAL_STYLE_FLAGS.underline;
-    }
-    if (activeStyleDepth.bold > 0) {
-      internalFlags |= INTERNAL_STYLE_FLAGS.bold;
-    }
-    internalStyleFlagsByChar.push(internalFlags);
   }
 
   return {
     plainText: plainTextCharacters.join(""),
     internalStyleFlagsByChar,
     hasBfuStyleMarkers,
+    hasColumnIndentMarkers,
   };
 }
 
@@ -665,8 +776,12 @@ function translateTextToBrailleNative(table, inputText) {
 
 function translateTextToBrailleWithBfuStyles(table, inputText) {
   const parsedInput = parseTextWithBfuStyleMarkers(inputText);
-  if (!parsedInput.hasBfuStyleMarkers) {
+  if (!parsedInput.hasBfuStyleMarkers && !parsedInput.hasColumnIndentMarkers) {
     return translateTextToBrailleNative(table, inputText);
+  }
+
+  if (!parsedInput.hasBfuStyleMarkers) {
+    return translateTextToBrailleNative(table, parsedInput.plainText);
   }
 
   if (parsedInput.plainText.length === 0) {
@@ -688,14 +803,6 @@ function translateTextToBrailleWithBfuStyles(table, inputText) {
   }
 
   return translateTextToBrailleNative(table, parsedInput.plainText);
-}
-
-function hasBfuStyleMarkup(inputText) {
-  if (typeof inputText !== "string" || inputText.length === 0) {
-    return false;
-  }
-
-  return parseTextWithBfuStyleMarkers(inputText).hasBfuStyleMarkers;
 }
 
 function resolveNativeTableFile(table) {
@@ -761,7 +868,8 @@ function translateForProduction(table, payload) {
     });
   }
 
-  if (hasBfuStyleMarkup(payload.inputText)) {
+  const parsedInput = parseTextWithBfuStyleMarkers(payload.inputText);
+  if (parsedInput.hasBfuStyleMarkers) {
     const outputText = translateWithLiblouisJavascript(table, payload);
     return normalizeTranslationResult({
       outputText,
@@ -776,7 +884,7 @@ function translateForProduction(table, payload) {
   try {
     const nativeFormatting = resolveNativeFormatting(payload);
     const outputText = nativeBrailleService.translateTextToBrailleWithNativeEngine({
-      inputText: payload.inputText,
+      inputText: parsedInput.hasColumnIndentMarkers ? parsedInput.plainText : payload.inputText,
       tableFile: resolveNativeTableFile(table),
       linesPerPage: nativeFormatting.linesPerPage,
       charactersPerLine: nativeFormatting.charactersPerLine,

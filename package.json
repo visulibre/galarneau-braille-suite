@@ -89,6 +89,7 @@
   },
   "allowScripts": {
     "koffi@3.3.5": true,
-    "electron-winstaller@5.4.0": true
+    "electron-winstaller@5.4.0": true,
+    "ejs@2.7.4": true
   }
 }
