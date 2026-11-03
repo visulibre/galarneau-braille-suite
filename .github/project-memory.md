@@ -99,10 +99,22 @@
 - Edition de tableaux braille importes: les delimiteurs `points 1-2-3-4-5-6`
   sont proteges (non effacables), et la navigation horizontale du curseur
   saute de cellule en cellule en se positionnant juste apres chaque delimiteur.
+  Quand le curseur arrive sur un caractere special de structure, il est
+  automatiquement recale sur le texte editable de la cellule (ou, a defaut,
+  sur la premiere zone de texte de la ligne).
   Depuis le premier delimiteur de la premiere ligne du tableau, la touche
   `Delete` declenche une confirmation de suppression du tableau complet.
   Le reajustement des largeurs se base uniquement sur le texte des cellules
   (titres de colonnes et items), pas sur les caracteres speciaux de structure.
+- Creation manuelle de tableaux braille depuis le menu **Insertion**:
+  l'action **Inserer un tableau...** demande le nombre de colonnes, le nombre
+  de rangees de contenu et la presence d'une rangee d'entete (oui/non), puis
+  insere la structure du tableau a la position active.
+- En pagination de tableau, quand un tableau se poursuit page suivante:
+  une ligne de fin de tableau est forcee a l'avant-derniere ligne de la page
+  courante, la derniere ligne restant reservee au numero de page braille ;
+  la page suivante reserve sa premiere ligne au numero de page imprime, puis
+  insere une ligne de debut de tableau en deuxieme ligne avant la suite.
 - Import enrichi des emphases bureautiques: conservation de `gras/italique/
   soulignement` sur `.docx`, `.odt/.odf` et `.rtf` via conversion en balises
   BFU (`<b>`, `<i>`, `<u>`) avant traduction. Les fichiers `.doc` legacy
@@ -148,6 +160,8 @@
   - bascule temps réel en case à cocher (`Ctrl/Cmd + Shift + T`).
 - Menu **Édition**:
   - Centrer la ligne active (`Ctrl/Cmd + E`).
+- Menu **Insertion**:
+  - Inserer un tableau....
 - Saisie braille clavier 8 points:
   - `F D S J K L A ;` pour points `1..8`.
 - Traduction intégrée directement sous chaque ligne de l’éditeur en document
@@ -222,10 +236,35 @@
 
 ## Historique des dernières décisions
 
+- 2026-11-03 : repositionnement du curseur sur le texte editable en tableau:
+  - sur les lignes de tableau avec texte, si le curseur tombe sur la structure
+    (delimiteurs), il est recale sur le contenu textuel de la cellule cible ;
+  - pour le positionnement initial d'une ligne, fallback sur la premiere zone
+    de texte disponible de la ligne si la cellule cible est vide.
+  Fichiers touches: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-11-03 : ajout du menu Insertion pour creer des tableaux braille:
+  - nouvelle entree **Insertion > Inserer un tableau...** cote menu principal ;
+  - dialogue de saisie colonnes/rangees/entete (`oui`/`non`) dans le renderer ;
+  - insertion de la structure du tableau a la position active, avec preservation
+    des protections et du reajustement deja en place.
+  Fichiers touches: `src/main/main.js`, `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+
 - 2026-11-03 : compression maximale des documents natifs:
   - enregistrement des `.gnp`/`.gnb` en format compresse (Brotli qualite max) ;
   - decompresion automatique en memoire a l'ouverture ;
   - compatibilite maintenue avec les anciens `.gnp`/`.gnb` non compresses.
+  Fichiers touches: `src/main/gbs-document-service.js`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-11-03 : pagination structuree des tableaux importes Excel:
+  - si un tableau atteint la fin de page et continue, insertion d'une ligne
+    de fin de tableau a l'avant-derniere ligne ;
+  - reservation de la derniere ligne de page pour le numero de page braille ;
+  - reprise sur page suivante avec premiere ligne reservee au numero imprime,
+    puis ligne de debut de tableau en deuxieme ligne.
   Fichiers touches: `src/main/gbs-document-service.js`, `README.md`,
   `.github/project-memory.md`.
 

@@ -419,13 +419,16 @@ avec balises braille de structure:
 - lignes de contenu: début de ligne en `points 1-2-3-4-5-6`, puis le même
    délimiteur avant chaque valeur de colonne.
 
-Comportement d'édition dans un tableau importé Excel:
+Comportement d'édition dans un tableau braille (importé Excel ou inséré manuellement):
 
 - seul le texte des cellules (titres de colonnes et items) est réajusté ;
 - les caractères spéciaux de structure ne sont pas modifiés directement ;
 - la position des délimiteurs `points 1-2-3-4-5-6` s'ajuste à la largeur des
   colonnes (entêtes et valeurs) ;
 - les délimiteurs `points 1-2-3-4-5-6` sont protégés (non effaçables) ;
+- si le curseur tombe sur un caractère spécial de structure, il se replace
+   automatiquement sur le texte éditable de la cellule (ou, à défaut, sur la
+   première zone de texte de la ligne) ;
 - en navigation horizontale, le curseur saute de cellule en cellule (d'un
   délimiteur au suivant) et se positionne au début de la cellule, juste après
   le délimiteur.
@@ -433,6 +436,28 @@ Comportement d'édition dans un tableau importé Excel:
    ligne du tableau et que tu appuies sur `Delete`, l'application demande une
    confirmation pour supprimer le tableau complet ; en cas de confirmation,
    l'ensemble du bloc tableau est supprimé.
+
+Creation manuelle d'un tableau:
+
+- ouvrir le menu **Insertion** puis choisir **Insérer un tableau…** ;
+- saisir le nombre de colonnes ;
+- saisir le nombre de rangées de contenu ;
+- choisir `oui` ou `non` pour ajouter une rangée d'entête.
+
+Si tu réponds `non` pour l'entête, le tableau est créé avec une ligne de début,
+les rangées de contenu et une ligne de fin (sans ligne d'entête ni séparateur
+d'entête).
+
+Gestion des sauts de page dans les tableaux:
+
+- quand un tableau atteint la fin d'une page braille et doit continuer, une
+   ligne de fin de tableau est insérée sur l'avant-dernière ligne de la page ;
+- la dernière ligne de cette page est gardée libre pour le numéro de page
+   braille ;
+- en reprise de tableau sur la page suivante, la première ligne est gardée
+   libre pour le numéro de page imprimé et une ligne de début de tableau
+   (même format que la première ligne du tableau) est insérée en deuxième
+   ligne avant la suite des données.
 
 ### Menu Traduire
 
@@ -449,6 +474,12 @@ Le menu **Édition** contient aussi :
 - **Appliquer le gras BFU** (`Ctrl/Cmd + B`)
 - **Appliquer l’italique BFU** (`Ctrl/Cmd + I`)
 - **Appliquer le surlignage BFU** (`Ctrl/Cmd + U`)
+
+### Menu Insertion
+
+Le menu **Insertion** contient :
+
+- **Insérer un tableau…**
 
 ### Raccourcis clavier
 

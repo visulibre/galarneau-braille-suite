@@ -229,6 +229,10 @@ const BRAILLE_TABLE_PROTECTED_CHARACTERS = new Set([
   BRAILLE_TABLE_HEADER_FILL_CHARACTER,
   BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER,
 ]);
+const TABLE_INSERTION_MIN_COLUMNS = 1;
+const TABLE_INSERTION_MAX_COLUMNS = 32;
+const TABLE_INSERTION_MIN_ROWS = 1;
+const TABLE_INSERTION_MAX_ROWS = 200;
 
 function configureLiveRegion(element, variant) {
   if (!element) {
@@ -2609,6 +2613,91 @@ function getBrailleTableCellStartPositions(lineValue) {
   return [...new Set(cellStartPositions)];
 }
 
+function getBrailleTableCellRanges(lineValue) {
+  const delimiterPositions = getBrailleTableDelimiterPositions(lineValue);
+  if (delimiterPositions.length === 0) {
+    return [];
+  }
+
+  const ranges = [];
+  delimiterPositions.forEach((delimiterPosition, delimiterIndex) => {
+    const rangeStart = delimiterPosition + 1;
+    const nextDelimiterPosition = delimiterPositions[delimiterIndex + 1];
+    const rangeEnd = Number.isInteger(nextDelimiterPosition)
+      ? nextDelimiterPosition
+      : lineValue.length;
+
+    if (rangeStart >= lineValue.length || rangeStart > rangeEnd) {
+      return;
+    }
+
+    ranges.push({
+      start: rangeStart,
+      end: rangeEnd,
+    });
+  });
+
+  return ranges;
+}
+
+function findFirstBrailleTableTextPositionInRange(lineValue, rangeStart, rangeEnd) {
+  if (typeof lineValue !== "string" || lineValue.length === 0) {
+    return null;
+  }
+
+  const safeStart = Math.max(0, Math.min(rangeStart, lineValue.length));
+  const safeEnd = Math.max(safeStart, Math.min(rangeEnd, lineValue.length));
+
+  for (let characterIndex = safeStart; characterIndex < safeEnd; characterIndex += 1) {
+    const currentCharacter = lineValue[characterIndex] ?? "";
+    if (isProtectedBrailleTableCharacter(currentCharacter) || currentCharacter === " ") {
+      continue;
+    }
+
+    return characterIndex;
+  }
+
+  return null;
+}
+
+function findFirstBrailleTableTextPosition(lineValue) {
+  return findFirstBrailleTableTextPositionInRange(lineValue, 0, lineValue.length);
+}
+
+function resolveBrailleTablePreferredCaret(lineValue, targetCaret, options = {}) {
+  const { fallbackToAnyTextInLine = false } = options;
+
+  if (typeof lineValue !== "string" || lineValue.length === 0) {
+    return targetCaret;
+  }
+
+  const safeTargetCaret = Math.max(0, Math.min(targetCaret, lineValue.length));
+  const cellRanges = getBrailleTableCellRanges(lineValue);
+  const matchingCellRange = cellRanges.find(
+    (cellRange) => safeTargetCaret >= cellRange.start && safeTargetCaret < cellRange.end,
+  );
+
+  if (matchingCellRange) {
+    const textPositionInCell = findFirstBrailleTableTextPositionInRange(
+      lineValue,
+      matchingCellRange.start,
+      matchingCellRange.end,
+    );
+    if (Number.isInteger(textPositionInCell)) {
+      return textPositionInCell;
+    }
+  }
+
+  if (fallbackToAnyTextInLine) {
+    const firstTextPosition = findFirstBrailleTableTextPosition(lineValue);
+    if (Number.isInteger(firstTextPosition)) {
+      return firstTextPosition;
+    }
+  }
+
+  return safeTargetCaret;
+}
+
 function lineRangeContainsProtectedBrailleTableCharacter(lineValue, rangeStart, rangeEnd) {
   if (typeof lineValue !== "string" || lineValue.length === 0) {
     return false;
@@ -2776,6 +2865,272 @@ function buildBrailleTableBorderLineFromColumnWidths(columnWidths, fillCharacter
     safeFillCharacter.repeat(Math.max(0, contentLineLength - 2)) +
     BRAILLE_TABLE_DELIMITER_CHARACTER
   );
+}
+
+function parseIntegerWithinRange(rawValue, minimumValue, maximumValue) {
+  if (typeof rawValue !== "string") {
+    return null;
+  }
+
+  const normalizedValue = rawValue.trim();
+  if (!/^\d+$/u.test(normalizedValue)) {
+    return null;
+  }
+
+  const parsedValue = Number.parseInt(normalizedValue, 10);
+  if (!Number.isInteger(parsedValue)) {
+    return null;
+  }
+
+  if (parsedValue < minimumValue || parsedValue > maximumValue) {
+    return null;
+  }
+
+  return parsedValue;
+}
+
+function promptTableDimension(label, defaultValue, minimumValue, maximumValue) {
+  while (true) {
+    const rawValue = window.prompt(
+      `${label} (${minimumValue}-${maximumValue})`,
+      String(defaultValue),
+    );
+    if (rawValue === null) {
+      return null;
+    }
+
+    const parsedValue = parseIntegerWithinRange(rawValue, minimumValue, maximumValue);
+    if (parsedValue !== null) {
+      return parsedValue;
+    }
+
+    setStatus(
+      documentStatusMessage,
+      `Valeur invalide. Entre un entier entre ${minimumValue} et ${maximumValue}.`,
+      "error",
+    );
+  }
+}
+
+function parseYesNoAnswer(rawValue) {
+  if (typeof rawValue !== "string") {
+    return null;
+  }
+
+  const normalizedValue = rawValue.trim().toLowerCase();
+  if (["o", "oui", "y", "yes", "1"].includes(normalizedValue)) {
+    return true;
+  }
+
+  if (["n", "non", "no", "0"].includes(normalizedValue)) {
+    return false;
+  }
+
+  return null;
+}
+
+function promptTableHeaderOption(defaultValue = true) {
+  const defaultLabel = defaultValue ? "oui" : "non";
+
+  while (true) {
+    const rawValue = window.prompt(
+      "Ajouter une rangée d'entête ? (oui/non)",
+      defaultLabel,
+    );
+    if (rawValue === null) {
+      return null;
+    }
+
+    const parsedValue = parseYesNoAnswer(rawValue);
+    if (parsedValue !== null) {
+      return parsedValue;
+    }
+
+    setStatus(
+      documentStatusMessage,
+      "Réponse invalide. Écris oui ou non.",
+      "error",
+    );
+  }
+}
+
+function requestBrailleTableInsertionConfig() {
+  const columnCount = promptTableDimension(
+    "Nombre de colonnes",
+    3,
+    TABLE_INSERTION_MIN_COLUMNS,
+    TABLE_INSERTION_MAX_COLUMNS,
+  );
+  if (columnCount === null) {
+    return null;
+  }
+
+  const rowCount = promptTableDimension(
+    "Nombre de rangées (sans compter l'entête)",
+    3,
+    TABLE_INSERTION_MIN_ROWS,
+    TABLE_INSERTION_MAX_ROWS,
+  );
+  if (rowCount === null) {
+    return null;
+  }
+
+  const includeHeaderRow = promptTableHeaderOption(true);
+  if (includeHeaderRow === null) {
+    return null;
+  }
+
+  return {
+    columnCount,
+    rowCount,
+    includeHeaderRow,
+  };
+}
+
+function buildBrailleTableTemplateLines(columnCount, rowCount, includeHeaderRow) {
+  const safeColumnCount = Math.max(TABLE_INSERTION_MIN_COLUMNS, columnCount);
+  const safeRowCount = Math.max(TABLE_INSERTION_MIN_ROWS, rowCount);
+
+  const columnWidths = new Array(safeColumnCount).fill(1);
+  const topBorderLine = buildBrailleTableBorderLineFromColumnWidths(
+    columnWidths,
+    BRAILLE_TABLE_HEADER_FILL_CHARACTER,
+  );
+  const middleOrBottomBorderLine = buildBrailleTableBorderLineFromColumnWidths(
+    columnWidths,
+    BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER,
+  );
+
+  const contentRows = [];
+  if (includeHeaderRow) {
+    contentRows.push(buildBrailleTableContentLineFromCells(new Array(safeColumnCount).fill(""), columnWidths));
+    contentRows.push(middleOrBottomBorderLine);
+  }
+
+  for (let rowIndex = 0; rowIndex < safeRowCount; rowIndex += 1) {
+    contentRows.push(buildBrailleTableContentLineFromCells(new Array(safeColumnCount).fill(""), columnWidths));
+  }
+
+  return [
+    topBorderLine,
+    ...contentRows,
+    middleOrBottomBorderLine,
+  ];
+}
+
+function insertBrailleTableAtActiveLine(config) {
+  if (!state.documentConfig || isFileBusy || isTranslationBusy) {
+    return;
+  }
+
+  if (shouldTranslateLineToBrailleInPlace()) {
+    setStatus(
+      documentStatusMessage,
+      "Désactive la conversion texte->braille en temps réel avant d'insérer un tableau.",
+      "neutral",
+    );
+    return;
+  }
+
+  const activeLineInput = resolveFormattingTargetLineInput();
+  if (!activeLineInput) {
+    setStatus(
+      documentStatusMessage,
+      "Sélectionne une ligne avant d'insérer un tableau.",
+      "neutral",
+    );
+    return;
+  }
+
+  const linePosition = getLinePositionFromInput(activeLineInput);
+  if (!linePosition) {
+    return;
+  }
+
+  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  const currentLines = flattenDocumentLines();
+  const currentLineValue = currentLines[currentFlatIndex] ?? "";
+  const selectionStart = activeLineInput.selectionStart ?? currentLineValue.length;
+  const selectionEnd = activeLineInput.selectionEnd ?? selectionStart;
+  const lineBeforeTable = currentLineValue.slice(0, selectionStart);
+  const lineAfterTable = currentLineValue.slice(selectionEnd);
+
+  const tableLines = buildBrailleTableTemplateLines(
+    config.columnCount,
+    config.rowCount,
+    config.includeHeaderRow,
+  );
+  const replacementLines = [];
+
+  if (lineBeforeTable.length > 0) {
+    replacementLines.push(lineBeforeTable);
+  }
+
+  replacementLines.push(...tableLines);
+
+  if (lineAfterTable.length > 0) {
+    replacementLines.push(lineAfterTable);
+  }
+
+  currentLines.splice(currentFlatIndex, 1, ...replacementLines);
+
+  const tableStartFlatIndex = lineBeforeTable.length > 0 ? currentFlatIndex + 1 : currentFlatIndex;
+  const normalizedTableResult = normalizeBrailleTableBlockInFlatLines(
+    currentLines,
+    tableStartFlatIndex,
+  );
+  const nextFlatLines = normalizedTableResult.changed ? normalizedTableResult.lines : currentLines;
+
+  state.pages = buildPagesFromFlatLines(nextFlatLines);
+  markDocumentChanged();
+
+  const sourceBufferSnapshot = buildSourceBufferFromDisplayLines();
+  renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+  refreshActiveLineSpacePreview();
+  refreshAllActionStates();
+
+  const firstContentFlatIndex = tableStartFlatIndex + 1;
+  focusLineByFlatIndex(firstContentFlatIndex, 0);
+
+  const focusedPosition = getLinePositionFromFlatIndex(firstContentFlatIndex);
+  if (focusedPosition) {
+    const focusedLineInput = findLineInputByPosition(focusedPosition);
+    if (focusedLineInput) {
+      moveCaretToBrailleTableCell(focusedLineInput, 0);
+    }
+  }
+
+  if (!isBrailleOnlyEditorMode()) {
+    if (state.realtimeTranslationEnabled) {
+      scheduleLiveBraillePreviewRefresh({ immediate: true });
+    } else if (hasInlineTranslationOutput()) {
+      setStatus(
+        translationStatusMessage,
+        "Le document a changé. Utilise Ctrl/Cmd+T pour mettre à jour la traduction dans l’éditeur.",
+        "neutral",
+      );
+    }
+  }
+
+  setStatus(
+    documentStatusMessage,
+    `Tableau inséré (${config.columnCount} colonne(s), ${config.rowCount} rangée(s)${config.includeHeaderRow ? ", avec entête" : ", sans entête"}).`,
+    "success",
+  );
+}
+
+function onInsertTableRequest() {
+  if (!state.documentConfig || isFileBusy || isTranslationBusy) {
+    return;
+  }
+
+  const insertionConfig = requestBrailleTableInsertionConfig();
+  if (!insertionConfig) {
+    setStatus(documentStatusMessage, "Insertion de tableau annulée.", "neutral");
+    return;
+  }
+
+  insertBrailleTableAtActiveLine(insertionConfig);
 }
 
 function normalizeBrailleTableBlockInFlatLines(flatLines, aroundFlatIndex) {
@@ -2994,10 +3349,15 @@ function setLineInputCaret(lineInput, caretPosition) {
   refreshActiveLineSpacePreview();
 }
 
-function moveCaretToBrailleTableCell(lineInput, direction = 1) {
+function moveCaretToBrailleTableCell(lineInput, direction = 1, options = {}) {
   if (!isLineInput(lineInput)) {
     return false;
   }
+
+  const {
+    preferTextInTargetCell = true,
+    fallbackToAnyTextInLine = direction === 0,
+  } = options;
 
   const lineValue = lineInput.value;
   const cellStartPositions = getBrailleTableCellStartPositions(lineValue);
@@ -3027,7 +3387,13 @@ function moveCaretToBrailleTableCell(lineInput, direction = 1) {
     targetCaret = cellStartPositions[0];
   }
 
-  setLineInputCaret(lineInput, targetCaret);
+  const preferredCaret = preferTextInTargetCell
+    ? resolveBrailleTablePreferredCaret(lineValue, targetCaret, {
+      fallbackToAnyTextInLine,
+    })
+    : targetCaret;
+
+  setLineInputCaret(lineInput, preferredCaret);
   return true;
 }
 
@@ -6070,6 +6436,11 @@ function onMenuActionRequest(payload) {
 
   if (payload.action === "center-active-line") {
     onCenterActiveLine();
+    return;
+  }
+
+  if (payload.action === "insert-table") {
+    onInsertTableRequest();
     return;
   }
 
