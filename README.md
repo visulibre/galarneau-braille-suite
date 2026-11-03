@@ -143,6 +143,19 @@ Construire l’exécutable Linux (AppImage) :
 npm run dist:linux
 ```
 
+Construire l’AppImage Linux via Podman (recommande sur Windows quand les
+symlinks AppImage echouent en local) :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build-linux-appimage-podman.ps1
+```
+
+Cette commande :
+
+- construit l'image Podman basee sur `build/linux-appimage/Dockerfile` ;
+- lance la build Linux dans le conteneur ;
+- copie l'artefact `*.AppImage` dans `dist/`.
+
 Construire les artefacts Windows (NSIS + ZIP) :
 
 ```bash

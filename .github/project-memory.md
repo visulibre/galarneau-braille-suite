@@ -43,6 +43,11 @@
   - icone Linux dediee (`build/icons/app-icon.png`) derivee du SVG projet ;
   - configuration `build.linux.icon` pour fiabiliser `npm run dist:linux`
     (AppImage).
+- Build AppImage Linux via conteneur Podman documente:
+  - image de build dediee (`build/linux-appimage/Dockerfile`) ;
+  - script PowerShell de build conteneurisee
+    (`scripts/build-linux-appimage-podman.ps1`) pour contourner les problemes
+    de symlink AppImage sur certains environnements Windows.
 - Chargement des tables `liblouis` validé en mode packagé
   (`app.asar.unpacked`).
 - Exécution AppImage: dépendance système `libfuse.so.2` requise, avec fallback
@@ -199,6 +204,16 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-11-03 : ajout d'une pipeline de build Linux conteneurisee (Podman):
+  - creation d'un Dockerfile dedie pour l'environnement electron-builder
+    Linux AppImage ;
+  - creation d'un script `build-linux-appimage-podman.ps1` qui build l'image,
+    lance la build Linux en conteneur et rapatrie l'AppImage dans `dist/` ;
+  - README mis a jour avec la commande de build Podman.
+  Fichiers touches: `build/linux-appimage/Dockerfile`,
+  `scripts/build-linux-appimage-podman.ps1`, `README.md`,
+  `.github/project-memory.md`.
 
 - 2026-11-03 : ajout de la balise de colonne braille persistante:
   - prise en charge de `<cb#>` dans le pipeline de traduction pour appliquer un
