@@ -617,7 +617,7 @@ function buildBrailleTableContentLine(cellValues, columnWidths) {
   return tableSegments.join("");
 }
 
-function buildBrailleTableTextFromRows(rowValues) {
+function buildBrailleTableLinesFromRows(rowValues) {
   const normalizedRows = (Array.isArray(rowValues) ? rowValues : [])
     .map((rowValue) => normalizeSpreadsheetRow(rowValue))
     .filter(
@@ -628,12 +628,12 @@ function buildBrailleTableTextFromRows(rowValues) {
     );
 
   if (normalizedRows.length === 0) {
-    return "";
+    return [];
   }
 
   const columnWidths = buildSpreadsheetColumnWidths(normalizedRows);
   if (columnWidths.length === 0) {
-    return "";
+    return [];
   }
 
   const headerRow = normalizedRows[0];
@@ -655,7 +655,85 @@ function buildBrailleTableTextFromRows(rowValues) {
     buildBrailleTableBorderLine(tableLineLength, BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER),
   );
 
-  return tableLines.join("\n");
+  return tableLines;
+}
+
+function buildBrailleTableTextFromRows(rowValues) {
+  return buildBrailleTableLinesFromRows(rowValues).join("\n");
+}
+
+function appendBrailleTableLinesWithPageNumberGuards(documentLines, tableLines, linesPerPage) {
+  if (!Array.isArray(documentLines) || !Array.isArray(tableLines) || tableLines.length === 0) {
+    return;
+  }
+
+  const safeLinesPerPage = clampBoundedInteger(
+    linesPerPage,
+    DEFAULT_IMPORT_OPTIONS.linesPerPage,
+    1,
+    60,
+  );
+
+  if (safeLinesPerPage < 3) {
+    documentLines.push(...tableLines);
+    return;
+  }
+
+  const tableStartLine = tableLines[0] ?? BRAILLE_TABLE_DELIMITER_CHARACTER;
+  const tableEndLine = tableLines[tableLines.length - 1] ?? tableStartLine;
+
+  let sourceLineIndex = 0;
+  let isFirstTableSegment = true;
+
+  while (sourceLineIndex < tableLines.length) {
+    if (!isFirstTableSegment) {
+      while (documentLines.length % safeLinesPerPage !== 0) {
+        documentLines.push("");
+      }
+
+      // Ligne 1 reservee pour le numero de page imprime.
+      documentLines.push("");
+      // Ligne 2 reservee a la reprise visuelle du tableau.
+      documentLines.push(tableStartLine);
+    }
+
+    isFirstTableSegment = false;
+
+    const pageLineIndex = documentLines.length % safeLinesPerPage;
+    const remainingSourceLines = tableLines.length - sourceLineIndex;
+    const remainingPageSlots = safeLinesPerPage - pageLineIndex;
+
+    if (remainingSourceLines <= remainingPageSlots) {
+      while (sourceLineIndex < tableLines.length) {
+        documentLines.push(tableLines[sourceLineIndex]);
+        sourceLineIndex += 1;
+      }
+      break;
+    }
+
+    // Le tableau continuera sur la page suivante: garder
+    // l'avant-derniere ligne pour la fin de tableau et la derniere pour
+    // le numero de page braille.
+    const availableContentSlots = Math.max(0, safeLinesPerPage - 2 - pageLineIndex);
+    const linesToWriteOnCurrentPage = Math.min(availableContentSlots, remainingSourceLines);
+
+    for (let index = 0; index < linesToWriteOnCurrentPage; index += 1) {
+      documentLines.push(tableLines[sourceLineIndex]);
+      sourceLineIndex += 1;
+    }
+
+    while ((documentLines.length % safeLinesPerPage) < safeLinesPerPage - 2) {
+      documentLines.push("");
+    }
+
+    if ((documentLines.length % safeLinesPerPage) === safeLinesPerPage - 2) {
+      documentLines.push(tableEndLine);
+    }
+
+    if ((documentLines.length % safeLinesPerPage) === safeLinesPerPage - 1) {
+      documentLines.push("");
+    }
+  }
 }
 
 function escapeRegExp(value) {
@@ -1902,7 +1980,7 @@ async function extractTextFromRtfFile(filePath) {
   return extractRtfTextFromContent(content);
 }
 
-async function extractTextFromSpreadsheetFile(filePath) {
+async function extractTextFromSpreadsheetFile(filePath, importOptions = null) {
   let workbook;
 
   try {
@@ -1919,8 +1997,14 @@ async function extractTextFromSpreadsheetFile(filePath) {
     throw new Error("Le fichier Excel ne contient aucune feuille exploitable.");
   }
 
+  const linesPerPage = clampBoundedInteger(
+    importOptions?.linesPerPage,
+    DEFAULT_IMPORT_OPTIONS.linesPerPage,
+    1,
+    60,
+  );
   const hasMultipleSheets = sheetNames.length > 1;
-  const sheetTableBlocks = [];
+  const outputLines = [];
 
   sheetNames.forEach((sheetName) => {
     const worksheet = workbook?.Sheets?.[sheetName];
@@ -1934,21 +2018,27 @@ async function extractTextFromSpreadsheetFile(filePath) {
       defval: "",
       blankrows: false,
     });
-    const tableText = buildBrailleTableTextFromRows(sheetRows);
-    if (tableText.length === 0) {
+    const tableLines = buildBrailleTableLinesFromRows(sheetRows);
+    if (tableLines.length === 0) {
       return;
     }
 
-    sheetTableBlocks.push(
-      hasMultipleSheets ? `Feuille: ${sheetName}\n${tableText}` : tableText,
-    );
+    if (outputLines.length > 0) {
+      outputLines.push("");
+    }
+
+    if (hasMultipleSheets) {
+      outputLines.push(`Feuille: ${sheetName}`);
+    }
+
+    appendBrailleTableLinesWithPageNumberGuards(outputLines, tableLines, linesPerPage);
   });
 
-  if (sheetTableBlocks.length === 0) {
+  if (outputLines.length === 0) {
     throw new Error("Le fichier Excel ne contient pas de tableau exploitable.");
   }
 
-  return sheetTableBlocks.join("\n\n");
+  return outputLines.join("\n");
 }
 
 async function extractTextFromExternalDocument(filePath, importOptions = null) {
@@ -1964,7 +2054,7 @@ async function extractTextFromExternalDocument(filePath, importOptions = null) {
       return extractTextFromOdfFile(filePath);
     case ".xls":
     case ".xlsx":
-      return extractTextFromSpreadsheetFile(filePath);
+      return extractTextFromSpreadsheetFile(filePath, importOptions);
     case ".pdf":
       return extractTextFromPdfFile(filePath);
     case ".txt":
