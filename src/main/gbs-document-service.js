@@ -1,9 +1,15 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const zlib = require("node:zlib");
+const { promisify } = require("node:util");
 const { dialog } = require("electron");
 const JSZip = require("jszip");
 const pdfParse = require("pdf-parse");
 const WordExtractor = require("word-extractor");
+const XLSX = require("xlsx");
+
+const brotliCompressAsync = promisify(zlib.brotliCompress);
+const brotliDecompressAsync = promisify(zlib.brotliDecompress);
 
 const GBS_DOCUMENT_FORMAT = "galarneau-braille-suite-document";
 const GBS_DOCUMENT_FORMAT_VERSION = 2;
@@ -20,11 +26,24 @@ const INTERNAL_DOCUMENT_EXTENSIONS = new Set([
   DOCUMENT_EXTENSION_BY_TYPE[DOCUMENT_TYPE_BRAILLE],
   LEGACY_GBS_EXTENSION,
 ]);
+const COMPRESSED_DOCUMENT_EXTENSIONS = new Set([
+  DOCUMENT_EXTENSION_BY_TYPE[DOCUMENT_TYPE_NORMAL],
+  DOCUMENT_EXTENSION_BY_TYPE[DOCUMENT_TYPE_BRAILLE],
+]);
+const COMPRESSED_DOCUMENT_MAGIC = Buffer.from("GBSCMP1\0", "ascii");
+const BROTLI_DOCUMENT_COMPRESSION_OPTIONS = Object.freeze({
+  params: {
+    [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+    [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+  },
+});
 const IMPORTABLE_DOCUMENT_EXTENSIONS = new Set([
   ".doc",
   ".docx",
   ".odf",
   ".odt",
+  ".xls",
+  ".xlsx",
   ".pdf",
   ".txt",
   ".md",
@@ -66,6 +85,9 @@ const SUPPORTED_INPUT_MODES = new Set([
 ]);
 const BOOLEAN_FALSE_VALUES = new Set(["0", "false", "off", "no", "none", "nil"]);
 const IMPORT_CENTERED_LINE_MARKER = "\u0001GBS_CENTERED_LINE\u0001";
+const BRAILLE_TABLE_DELIMITER_CHARACTER = String.fromCodePoint(0x283f); // dots 1-2-3-4-5-6
+const BRAILLE_TABLE_HEADER_FILL_CHARACTER = String.fromCodePoint(0x281b); // dots 1-2-4-5
+const BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER = String.fromCodePoint(0x2836); // dots 2-3-5-6
 const RTF_IGNORABLE_DESTINATION_KEYWORDS = new Set([
   "annotation",
   "atnauthor",
@@ -135,6 +157,75 @@ function getExtensionForType(documentType) {
 
 function getFileExtension(filePath) {
   return path.extname(filePath).toLowerCase();
+}
+
+function shouldUseCompressedStorageForPath(filePath) {
+  const extension = getFileExtension(filePath);
+  return COMPRESSED_DOCUMENT_EXTENSIONS.has(extension);
+}
+
+function hasCompressedDocumentMagic(fileBuffer) {
+  if (!Buffer.isBuffer(fileBuffer) || fileBuffer.length <= COMPRESSED_DOCUMENT_MAGIC.length) {
+    return false;
+  }
+
+  return fileBuffer
+    .subarray(0, COMPRESSED_DOCUMENT_MAGIC.length)
+    .equals(COMPRESSED_DOCUMENT_MAGIC);
+}
+
+async function serializeDocumentContentForStorage(documentContent, targetPath) {
+  if (typeof documentContent !== "string") {
+    throw new TypeError("Le contenu du document a serialiser est invalide.");
+  }
+
+  if (!shouldUseCompressedStorageForPath(targetPath)) {
+    return documentContent;
+  }
+
+  const documentBuffer = Buffer.from(documentContent, "utf8");
+
+  let compressedPayload;
+  try {
+    compressedPayload = await brotliCompressAsync(
+      documentBuffer,
+      BROTLI_DOCUMENT_COMPRESSION_OPTIONS,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Impossible de compresser le document: ${reason}`);
+  }
+
+  return Buffer.concat([COMPRESSED_DOCUMENT_MAGIC, compressedPayload]);
+}
+
+async function deserializeDocumentContentFromStorage(fileBuffer, sourcePath) {
+  if (!Buffer.isBuffer(fileBuffer)) {
+    throw new TypeError("Le contenu du document a charger est invalide.");
+  }
+
+  if (!shouldUseCompressedStorageForPath(sourcePath)) {
+    return fileBuffer.toString("utf8");
+  }
+
+  if (!hasCompressedDocumentMagic(fileBuffer)) {
+    return fileBuffer.toString("utf8");
+  }
+
+  const compressedPayload = fileBuffer.subarray(COMPRESSED_DOCUMENT_MAGIC.length);
+  if (compressedPayload.length === 0) {
+    throw new Error("Le document compresse est vide.");
+  }
+
+  let decompressedBuffer;
+  try {
+    decompressedBuffer = await brotliDecompressAsync(compressedPayload);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Impossible de decompresser le document: ${reason}`);
+  }
+
+  return decompressedBuffer.toString("utf8");
 }
 
 function inferDocumentTypeFromPath(filePath) {
@@ -413,6 +504,158 @@ function applyImportedCenterMarkers(inputText, lineWidth) {
         : normalizedLineValue;
     })
     .join("\n");
+}
+
+function normalizeSpreadsheetCellValue(cellValue) {
+  if (cellValue === null || cellValue === undefined) {
+    return "";
+  }
+
+  return String(cellValue)
+    .replace(/\r\n?/gu, " ")
+    .replace(/\n/gu, " ")
+    .replace(/\t/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+}
+
+function normalizeSpreadsheetRow(rowValues) {
+  const sourceRow = Array.isArray(rowValues) ? rowValues : [];
+  const normalizedCells = sourceRow.map((cellValue) => normalizeSpreadsheetCellValue(cellValue));
+
+  while (
+    normalizedCells.length > 0 &&
+    normalizedCells[normalizedCells.length - 1].length === 0
+  ) {
+    normalizedCells.pop();
+  }
+
+  return normalizedCells;
+}
+
+function buildBrailleTableBorderLine(lineLength, fillCharacter) {
+  const safeLineLength = Number.isInteger(lineLength)
+    ? Math.max(1, lineLength)
+    : 1;
+  const safeFillCharacter =
+    typeof fillCharacter === "string" && fillCharacter.length > 0
+      ? fillCharacter
+      : BRAILLE_TABLE_HEADER_FILL_CHARACTER;
+
+  if (safeLineLength <= 1) {
+    return BRAILLE_TABLE_DELIMITER_CHARACTER;
+  }
+
+  if (safeLineLength === 2) {
+    return `${BRAILLE_TABLE_DELIMITER_CHARACTER}${BRAILLE_TABLE_DELIMITER_CHARACTER}`;
+  }
+
+  return (
+    BRAILLE_TABLE_DELIMITER_CHARACTER +
+    safeFillCharacter.repeat(safeLineLength - 2) +
+    BRAILLE_TABLE_DELIMITER_CHARACTER
+  );
+}
+
+function buildSpreadsheetColumnWidths(normalizedRows) {
+  const safeRows = Array.isArray(normalizedRows) ? normalizedRows : [];
+  if (safeRows.length === 0) {
+    return [];
+  }
+
+  const columnCount = safeRows.reduce(
+    (maxColumns, rowValue) => Math.max(maxColumns, Array.isArray(rowValue) ? rowValue.length : 0),
+    0,
+  );
+  if (columnCount <= 0) {
+    return [];
+  }
+
+  const columnWidths = new Array(columnCount).fill(1);
+  const headerRow = Array.isArray(safeRows[0]) ? safeRows[0] : [];
+
+  for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+    const headerValue = headerRow[columnIndex] ?? "";
+    columnWidths[columnIndex] = Math.max(1, headerValue.length);
+  }
+
+  safeRows.forEach((rowValue) => {
+    if (!Array.isArray(rowValue)) {
+      return;
+    }
+
+    for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+      const cellValue = rowValue[columnIndex] ?? "";
+      columnWidths[columnIndex] = Math.max(columnWidths[columnIndex], cellValue.length);
+    }
+  });
+
+  return columnWidths;
+}
+
+function buildBrailleTableContentLine(cellValues, columnWidths) {
+  const normalizedCells = Array.isArray(cellValues)
+    ? cellValues.map((cellValue) => normalizeSpreadsheetCellValue(cellValue))
+    : [];
+  const safeColumnWidths = Array.isArray(columnWidths)
+    ? columnWidths.map((columnWidth) => (Number.isInteger(columnWidth) ? Math.max(1, columnWidth) : 1))
+    : [];
+
+  if (safeColumnWidths.length === 0) {
+    return BRAILLE_TABLE_DELIMITER_CHARACTER;
+  }
+
+  const normalizedCellsByColumn = safeColumnWidths.map((_, columnIndex) =>
+    normalizedCells[columnIndex] ?? "",
+  );
+
+  const tableSegments = normalizedCellsByColumn.map((cellValue, columnIndex) => {
+    const safeCellValue = typeof cellValue === "string" ? cellValue : "";
+    return `${BRAILLE_TABLE_DELIMITER_CHARACTER}${safeCellValue.padEnd(safeColumnWidths[columnIndex], " ")}`;
+  });
+
+  return tableSegments.join("");
+}
+
+function buildBrailleTableTextFromRows(rowValues) {
+  const normalizedRows = (Array.isArray(rowValues) ? rowValues : [])
+    .map((rowValue) => normalizeSpreadsheetRow(rowValue))
+    .filter(
+      (rowValue) =>
+        Array.isArray(rowValue) &&
+        rowValue.length > 0 &&
+        rowValue.some((cellValue) => cellValue.length > 0),
+    );
+
+  if (normalizedRows.length === 0) {
+    return "";
+  }
+
+  const columnWidths = buildSpreadsheetColumnWidths(normalizedRows);
+  if (columnWidths.length === 0) {
+    return "";
+  }
+
+  const headerRow = normalizedRows[0];
+  const bodyRows = normalizedRows.slice(1);
+  const headerLine = buildBrailleTableContentLine(headerRow, columnWidths);
+  const tableLineLength = Math.max(1, headerLine.length);
+
+  const tableLines = [
+    buildBrailleTableBorderLine(tableLineLength, BRAILLE_TABLE_HEADER_FILL_CHARACTER),
+    headerLine,
+    buildBrailleTableBorderLine(tableLineLength, BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER),
+  ];
+
+  bodyRows.forEach((rowValue) => {
+    tableLines.push(buildBrailleTableContentLine(rowValue, columnWidths));
+  });
+
+  tableLines.push(
+    buildBrailleTableBorderLine(tableLineLength, BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER),
+  );
+
+  return tableLines.join("\n");
 }
 
 function escapeRegExp(value) {
@@ -1659,7 +1902,56 @@ async function extractTextFromRtfFile(filePath) {
   return extractRtfTextFromContent(content);
 }
 
-async function extractTextFromExternalDocument(filePath) {
+async function extractTextFromSpreadsheetFile(filePath) {
+  let workbook;
+
+  try {
+    workbook = XLSX.readFile(filePath, {
+      cellDates: true,
+      raw: false,
+    });
+  } catch {
+    throw new Error("Le fichier Excel est corrompu ou non supporte.");
+  }
+
+  const sheetNames = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+  if (sheetNames.length === 0) {
+    throw new Error("Le fichier Excel ne contient aucune feuille exploitable.");
+  }
+
+  const hasMultipleSheets = sheetNames.length > 1;
+  const sheetTableBlocks = [];
+
+  sheetNames.forEach((sheetName) => {
+    const worksheet = workbook?.Sheets?.[sheetName];
+    if (!worksheet) {
+      return;
+    }
+
+    const sheetRows = XLSX.utils.sheet_to_json(worksheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+      blankrows: false,
+    });
+    const tableText = buildBrailleTableTextFromRows(sheetRows);
+    if (tableText.length === 0) {
+      return;
+    }
+
+    sheetTableBlocks.push(
+      hasMultipleSheets ? `Feuille: ${sheetName}\n${tableText}` : tableText,
+    );
+  });
+
+  if (sheetTableBlocks.length === 0) {
+    throw new Error("Le fichier Excel ne contient pas de tableau exploitable.");
+  }
+
+  return sheetTableBlocks.join("\n\n");
+}
+
+async function extractTextFromExternalDocument(filePath, importOptions = null) {
   const extension = getFileExtension(filePath);
 
   switch (extension) {
@@ -1670,6 +1962,9 @@ async function extractTextFromExternalDocument(filePath) {
     case ".odf":
     case ".odt":
       return extractTextFromOdfFile(filePath);
+    case ".xls":
+    case ".xlsx":
+      return extractTextFromSpreadsheetFile(filePath);
     case ".pdf":
       return extractTextFromPdfFile(filePath);
     case ".txt":
@@ -1909,7 +2204,11 @@ async function saveDocument(payload, browserWindow) {
   ensureString(targetPath, "Le chemin du document est invalide.");
   const normalizedPath = ensureDocumentExtension(targetPath, normalizedDocument.documentType);
   const serializedDocument = `${JSON.stringify(normalizedDocument, null, 2)}\n`;
-  await fs.writeFile(normalizedPath, serializedDocument, "utf8");
+  const persistedDocumentContent = await serializeDocumentContentForStorage(
+    serializedDocument,
+    normalizedPath,
+  );
+  await fs.writeFile(normalizedPath, persistedDocumentContent);
 
   return {
     canceled: false,
@@ -1931,6 +2230,8 @@ async function openDocument(payload, browserWindow) {
           "docx",
           "odf",
           "odt",
+          "xls",
+          "xlsx",
           "pdf",
           "rtf",
           "txt",
@@ -1941,7 +2242,10 @@ async function openDocument(payload, browserWindow) {
       { name: "Document normal Galarneau", extensions: ["gnp"] },
       { name: "Document braille Galarneau", extensions: ["gnb"] },
       { name: "Document Galarneau legacy", extensions: ["gbs"] },
-      { name: "Documents bureautiques", extensions: ["doc", "docx", "odf", "odt", "pdf", "rtf"] },
+      {
+        name: "Documents bureautiques",
+        extensions: ["doc", "docx", "odf", "odt", "xls", "xlsx", "pdf", "rtf"],
+      },
       { name: "Documents texte", extensions: ["txt", "md", "markdown"] },
     ],
     properties: ["openFile"],
@@ -1960,13 +2264,13 @@ async function openDocument(payload, browserWindow) {
 
   if (!hasSupportedDocumentExtension(selectedPath)) {
     throw new TypeError(
-      "Le fichier selectionne doit etre un .gnp, .gnb, .gbs, .doc, .docx, .odf, .odt, .pdf, .rtf, .txt, .md ou .markdown.",
+      "Le fichier selectionne doit etre un .gnp, .gnb, .gbs, .doc, .docx, .odf, .odt, .xls, .xlsx, .pdf, .rtf, .txt, .md ou .markdown.",
     );
   }
 
   if (!isInternalDocumentExtension(selectedPath)) {
     const importOptions = normalizeImportOptions(payload);
-    const extractedText = await extractTextFromExternalDocument(selectedPath);
+    const extractedText = await extractTextFromExternalDocument(selectedPath, importOptions);
     const importedDocumentPayload = buildImportedDocumentFromText(extractedText, importOptions);
     const importedDocument = normalizeDocument(importedDocumentPayload, {
       fallbackDocumentType: DOCUMENT_TYPE_NORMAL,
@@ -1985,7 +2289,8 @@ async function openDocument(payload, browserWindow) {
     };
   }
 
-  const content = await fs.readFile(selectedPath, "utf8");
+  const fileBuffer = await fs.readFile(selectedPath);
+  const content = await deserializeDocumentContentFromStorage(fileBuffer, selectedPath);
   let parsedDocument;
 
   try {

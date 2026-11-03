@@ -233,7 +233,7 @@ Le binaire non empaqueté est aussi disponible ici :
 2. Utiliser `Ctrl/Cmd + N` pour afficher la section **Créer un nouveau document**.
    Tu peux aussi utiliser `Ctrl/Cmd + O` pour ouvrir un document Galarneau
    (`.gnp`, `.gnb`, `.gbs`) ou importer un fichier externe (`.doc`, `.docx`,
-   `.odt`, `.odf`, `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown`).
+   `.odt`, `.odf`, `.xls`, `.xlsx`, `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown`).
 3. Dans **Créer un nouveau document**, choisir :
    - le type de document : normal (`.gnp`) ou braille (`.gnb`) ;
    - la table de traduction braille ;
@@ -360,6 +360,20 @@ Notes:
 - les balises `cb` ne sont pas envoyées au traducteur telles quelles: elles
    sont interprétées puis retirées.
 
+### Retrait de paragraphe (`<par>`)
+
+Tu peux aussi utiliser la balise `&lt;par&gt;` pour appliquer un retrait de
+paragraphe sur la ligne courante uniquement :
+
+- la ligne qui contient `&lt;par&gt;` est décalée de 2 cellules braille ;
+- la ligne suivante repart au début normal (pas de décalage persistant) ;
+- en équivalence imprimée, ce retrait correspond à 5 caractères.
+
+Notes:
+
+- `&lt;/par&gt;` est accepté et ignoré (pas de décalage ajouté) ;
+- comme `cb`, la balise `par` est interprétée puis retirée avant traduction.
+
 ### Références de conformité BFU
 
 - Table liblouis française abrégée BFU :
@@ -381,9 +395,44 @@ Le menu **Fichier** de l’application contient :
 - **Enregistrer sous…**
 
 L'action **Ouvrir…** accepte les documents natifs (`.gnp`, `.gnb`, `.gbs`) et
-importe aussi des documents externes (`.doc`, `.docx`, `.odt`, `.odf`, `.pdf`,
-`.rtf`, `.txt`, `.md`, `.markdown`) en les convertissant vers un document
+importe aussi des documents externes (`.doc`, `.docx`, `.odt`, `.odf`, `.xls`,
+`.xlsx`, `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown`) en les convertissant vers un document
 normal interne.
+
+Stockage des documents natifs:
+
+- les fichiers `.gnp` et `.gnb` sont enregistres compresses (compression
+   maximale) ;
+- a l'ouverture, l'application decompresse automatiquement le contenu en
+   memoire avant lecture ;
+- les anciens `.gnp`/`.gnb` non compresses restent lisibles.
+
+Pour les fichiers Excel (`.xls` / `.xlsx`), l'import construit un tableau texte
+avec balises braille de structure:
+
+- bord haut: premier caractère en `points 1-2-3-4-5-6`, corps de ligne en
+   `points 1-2-4-5`, dernier caractère identique au premier;
+- ligne d'entête: début de ligne en `points 1-2-3-4-5-6`, puis délimiteur
+   `points 1-2-3-4-5-6` avant chaque titre de colonne;
+- séparateur d'entête et bord de fin: premier/dernier caractère en
+   `points 1-2-3-4-5-6`, corps en `points 2-3-5-6`;
+- lignes de contenu: début de ligne en `points 1-2-3-4-5-6`, puis le même
+   délimiteur avant chaque valeur de colonne.
+
+Comportement d'édition dans un tableau importé Excel:
+
+- seul le texte des cellules (titres de colonnes et items) est réajusté ;
+- les caractères spéciaux de structure ne sont pas modifiés directement ;
+- la position des délimiteurs `points 1-2-3-4-5-6` s'ajuste à la largeur des
+  colonnes (entêtes et valeurs) ;
+- les délimiteurs `points 1-2-3-4-5-6` sont protégés (non effaçables) ;
+- en navigation horizontale, le curseur saute de cellule en cellule (d'un
+  délimiteur au suivant) et se positionne au début de la cellule, juste après
+  le délimiteur.
+- si le curseur est sur le tout premier `points 1-2-3-4-5-6` de la première
+   ligne du tableau et que tu appuies sur `Delete`, l'application demande une
+   confirmation pour supprimer le tableau complet ; en cas de confirmation,
+   l'ensemble du bloc tableau est supprimé.
 
 ### Menu Traduire
 
@@ -404,7 +453,7 @@ Le menu **Édition** contient aussi :
 ### Raccourcis clavier
 
 - `Ctrl/Cmd + N` : afficher la création d’un nouveau document `.gnp`/`.gnb`
-- `Ctrl/Cmd + O` : ouvrir un document `.gnp`/`.gnb`/`.gbs` ou importer un fichier `.doc`/`.docx`/`.odt`/`.odf`/`.pdf`/`.rtf`/`.txt`/`.md`/`.markdown`
+- `Ctrl/Cmd + O` : ouvrir un document `.gnp`/`.gnb`/`.gbs` ou importer un fichier `.doc`/`.docx`/`.odt`/`.odf`/`.xls`/`.xlsx`/`.pdf`/`.rtf`/`.txt`/`.md`/`.markdown`
 - `Ctrl/Cmd + S` : enregistrer le document actif (`.gnp` ou `.gnb`)
 - `Ctrl/Cmd + Shift + S` : enregistrer le document actif sous…
 - `Ctrl/Cmd + T` : traduire le document en une seule fois

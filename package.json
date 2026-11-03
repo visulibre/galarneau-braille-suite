@@ -25,7 +25,8 @@
     "jszip": "^3.10.2",
     "liblouis": "^0.4.0",
     "pdf-parse": "^2.4.5",
-    "word-extractor": "^1.0.4"
+    "word-extractor": "^1.0.4",
+    "xlsx": "^0.18.5"
   },
   "optionalDependencies": {
     "koffi": "^3.3.5"

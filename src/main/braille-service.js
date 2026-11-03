@@ -84,6 +84,8 @@ const BFU_STYLE_CLASS_BY_MARKUP_TAG = Object.freeze({
 });
 const BRAILLE_COLUMN_BLOCK_TAG_NAME = "cb";
 const BRAILLE_COLUMN_BLOCK_MAX_INDENT = 120;
+const BRAILLE_PARAGRAPH_TAG_NAME = "par";
+const BRAILLE_PARAGRAPH_BRAILLE_INDENT = 2;
 
 let isTableLoadingReady = false;
 let tableLoadingFailure = null;
@@ -485,6 +487,41 @@ function parseColumnBlockTagAt(inputText, startIndex) {
   };
 }
 
+function parseParagraphTagAt(inputText, startIndex) {
+  if (inputText[startIndex] !== "<") {
+    return null;
+  }
+
+  const closingBracketIndex = inputText.indexOf(">", startIndex + 1);
+  if (closingBracketIndex === -1) {
+    return null;
+  }
+
+  const rawTagContent = inputText
+    .slice(startIndex + 1, closingBracketIndex)
+    .trim()
+    .toLowerCase();
+  if (rawTagContent.length === 0) {
+    return null;
+  }
+
+  if (rawTagContent === BRAILLE_PARAGRAPH_TAG_NAME || rawTagContent === `${BRAILLE_PARAGRAPH_TAG_NAME}/`) {
+    return {
+      applyIndent: true,
+      length: closingBracketIndex - startIndex + 1,
+    };
+  }
+
+  if (rawTagContent === `/${BRAILLE_PARAGRAPH_TAG_NAME}`) {
+    return {
+      applyIndent: false,
+      length: closingBracketIndex - startIndex + 1,
+    };
+  }
+
+  return null;
+}
+
 function appendComputedCharacter(characters, styleFlags, character, activeStyleDepth) {
   characters.push(character);
 
@@ -553,6 +590,23 @@ function parseTextWithBfuStyleMarkers(inputText) {
       }
 
       index += columnIndentTag.length - 1;
+      continue;
+    }
+
+    const paragraphTag = parseParagraphTagAt(normalizedInputText, index);
+    if (paragraphTag) {
+      hasColumnIndentMarkers = true;
+
+      if (paragraphTag.applyIndent) {
+        currentLineColumnIndex = appendColumnIndentPadding(
+          plainTextCharacters,
+          internalStyleFlagsByChar,
+          currentLineColumnIndex,
+          BRAILLE_PARAGRAPH_BRAILLE_INDENT,
+        );
+      }
+
+      index += paragraphTag.length - 1;
       continue;
     }
 

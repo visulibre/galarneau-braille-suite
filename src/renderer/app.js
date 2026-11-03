@@ -221,6 +221,14 @@ const LINUX_BRLAPI_CURSOR_MARKER = String.fromCodePoint(0x28c0); // dots 7-8
 const LINUX_BRLAPI_SYNC_DEBOUNCE_MS = 35;
 const BRAILLE_DISPLAY_MIN_COLUMNS = 40;
 const BRAILLE_DISPLAY_COUNTERLESS_COLUMNS = 40;
+const BRAILLE_TABLE_DELIMITER_CHARACTER = String.fromCodePoint(0x283f); // dots 1-2-3-4-5-6
+const BRAILLE_TABLE_HEADER_FILL_CHARACTER = String.fromCodePoint(0x281b); // dots 1-2-4-5
+const BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER = String.fromCodePoint(0x2836); // dots 2-3-5-6
+const BRAILLE_TABLE_PROTECTED_CHARACTERS = new Set([
+  BRAILLE_TABLE_DELIMITER_CHARACTER,
+  BRAILLE_TABLE_HEADER_FILL_CHARACTER,
+  BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER,
+]);
 
 function configureLiveRegion(element, variant) {
   if (!element) {
@@ -2557,6 +2565,507 @@ function containsBrailleUnicode(value) {
   return /[\u2800-\u28FF]/u.test(value);
 }
 
+function isBrailleTableLineValue(lineValue) {
+  if (typeof lineValue !== "string" || lineValue.length === 0) {
+    return false;
+  }
+
+  return lineValue.startsWith(BRAILLE_TABLE_DELIMITER_CHARACTER);
+}
+
+function isProtectedBrailleTableCharacter(character) {
+  return typeof character === "string" && BRAILLE_TABLE_PROTECTED_CHARACTERS.has(character);
+}
+
+function getBrailleTableDelimiterPositions(lineValue) {
+  if (!isBrailleTableLineValue(lineValue)) {
+    return [];
+  }
+
+  const delimiterPositions = [];
+  for (let characterIndex = 0; characterIndex < lineValue.length; characterIndex += 1) {
+    if (lineValue[characterIndex] === BRAILLE_TABLE_DELIMITER_CHARACTER) {
+      delimiterPositions.push(characterIndex);
+    }
+  }
+
+  return delimiterPositions;
+}
+
+function getBrailleTableCellStartPositions(lineValue) {
+  const delimiterPositions = getBrailleTableDelimiterPositions(lineValue);
+  if (delimiterPositions.length === 0) {
+    return [];
+  }
+
+  const cellStartPositions = [];
+  delimiterPositions.forEach((delimiterIndex) => {
+    const cellStart = delimiterIndex + 1;
+    if (cellStart < lineValue.length) {
+      cellStartPositions.push(cellStart);
+    }
+  });
+
+  return [...new Set(cellStartPositions)];
+}
+
+function lineRangeContainsProtectedBrailleTableCharacter(lineValue, rangeStart, rangeEnd) {
+  if (typeof lineValue !== "string" || lineValue.length === 0) {
+    return false;
+  }
+
+  const safeStart = Math.max(0, Math.min(rangeStart, lineValue.length));
+  const safeEnd = Math.max(safeStart, Math.min(rangeEnd, lineValue.length));
+
+  for (let characterIndex = safeStart; characterIndex < safeEnd; characterIndex += 1) {
+    if (isProtectedBrailleTableCharacter(lineValue[characterIndex])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function findBrailleTableBoundsAroundFlatIndex(flatLines, aroundFlatIndex) {
+  if (!Array.isArray(flatLines) || flatLines.length === 0) {
+    return null;
+  }
+
+  const safeAroundFlatIndex = Math.max(0, Math.min(aroundFlatIndex, flatLines.length - 1));
+  if (!isBrailleTableLineValue(flatLines[safeAroundFlatIndex])) {
+    return null;
+  }
+
+  let startFlatIndex = safeAroundFlatIndex;
+  while (startFlatIndex > 0 && isBrailleTableLineValue(flatLines[startFlatIndex - 1])) {
+    startFlatIndex -= 1;
+  }
+
+  let endFlatIndex = safeAroundFlatIndex;
+  while (
+    endFlatIndex + 1 < flatLines.length &&
+    isBrailleTableLineValue(flatLines[endFlatIndex + 1])
+  ) {
+    endFlatIndex += 1;
+  }
+
+  return {
+    startFlatIndex,
+    endFlatIndex,
+  };
+}
+
+function classifyBrailleTableBorderFillCharacter(lineValue) {
+  if (!isBrailleTableLineValue(lineValue)) {
+    return null;
+  }
+
+  let hasHeaderFillCharacter = false;
+  let hasRowSeparatorFillCharacter = false;
+
+  for (let characterIndex = 0; characterIndex < lineValue.length; characterIndex += 1) {
+    const currentCharacter = lineValue[characterIndex];
+    if (currentCharacter === BRAILLE_TABLE_DELIMITER_CHARACTER) {
+      continue;
+    }
+
+    if (currentCharacter === BRAILLE_TABLE_HEADER_FILL_CHARACTER) {
+      hasHeaderFillCharacter = true;
+      continue;
+    }
+
+    if (currentCharacter === BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER) {
+      hasRowSeparatorFillCharacter = true;
+      continue;
+    }
+
+    return null;
+  }
+
+  if (hasHeaderFillCharacter && !hasRowSeparatorFillCharacter) {
+    return BRAILLE_TABLE_HEADER_FILL_CHARACTER;
+  }
+
+  if (hasRowSeparatorFillCharacter && !hasHeaderFillCharacter) {
+    return BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER;
+  }
+
+  if (!hasHeaderFillCharacter && !hasRowSeparatorFillCharacter) {
+    return BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER;
+  }
+
+  return BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER;
+}
+
+function parseBrailleTableContentCells(lineValue) {
+  if (!isBrailleTableLineValue(lineValue)) {
+    return [];
+  }
+
+  const cells = [];
+  let currentCell = "";
+
+  for (let characterIndex = 1; characterIndex < lineValue.length; characterIndex += 1) {
+    const currentCharacter = lineValue[characterIndex];
+    if (currentCharacter === BRAILLE_TABLE_DELIMITER_CHARACTER) {
+      cells.push(currentCell);
+      currentCell = "";
+      continue;
+    }
+
+    currentCell += currentCharacter;
+  }
+
+  cells.push(currentCell);
+  return cells.map((cellText) =>
+    typeof cellText === "string" ? cellText.replace(/\s+$/u, "") : "",
+  );
+}
+
+function buildBrailleTableContentLineFromCells(cellValues, columnWidths) {
+  const safeWidths = Array.isArray(columnWidths)
+    ? columnWidths.map((columnWidth) =>
+      Number.isInteger(columnWidth) ? Math.max(1, columnWidth) : 1,
+    )
+    : [];
+  if (safeWidths.length === 0) {
+    return BRAILLE_TABLE_DELIMITER_CHARACTER;
+  }
+
+  const normalizedCells = Array.isArray(cellValues)
+    ? cellValues.map((cellValue) =>
+      typeof cellValue === "string" ? cellValue.replace(/\s+$/u, "") : "",
+    )
+    : [];
+
+  let outputLine = "";
+  for (let columnIndex = 0; columnIndex < safeWidths.length; columnIndex += 1) {
+    const cellValue = normalizedCells[columnIndex] ?? "";
+    outputLine += `${BRAILLE_TABLE_DELIMITER_CHARACTER}${cellValue.padEnd(safeWidths[columnIndex], " ")}`;
+  }
+
+  return outputLine;
+}
+
+function buildBrailleTableBorderLineFromColumnWidths(columnWidths, fillCharacter) {
+  const safeWidths = Array.isArray(columnWidths)
+    ? columnWidths.map((columnWidth) =>
+      Number.isInteger(columnWidth) ? Math.max(1, columnWidth) : 1,
+    )
+    : [];
+
+  if (safeWidths.length === 0) {
+    return BRAILLE_TABLE_DELIMITER_CHARACTER;
+  }
+
+  const safeFillCharacter =
+    typeof fillCharacter === "string" && fillCharacter.length > 0
+      ? fillCharacter
+      : BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER;
+  const contentLineLength = safeWidths.reduce(
+    (currentLength, columnWidth) => currentLength + 1 + columnWidth,
+    0,
+  );
+
+  if (contentLineLength <= 1) {
+    return BRAILLE_TABLE_DELIMITER_CHARACTER;
+  }
+
+  return (
+    BRAILLE_TABLE_DELIMITER_CHARACTER +
+    safeFillCharacter.repeat(Math.max(0, contentLineLength - 2)) +
+    BRAILLE_TABLE_DELIMITER_CHARACTER
+  );
+}
+
+function normalizeBrailleTableBlockInFlatLines(flatLines, aroundFlatIndex) {
+  if (!Array.isArray(flatLines) || flatLines.length === 0) {
+    return {
+      changed: false,
+      lines: Array.isArray(flatLines) ? flatLines : [],
+    };
+  }
+
+  const tableBounds = findBrailleTableBoundsAroundFlatIndex(flatLines, aroundFlatIndex);
+  if (!tableBounds) {
+    return {
+      changed: false,
+      lines: flatLines,
+    };
+  }
+
+  const tableLines = flatLines.slice(tableBounds.startFlatIndex, tableBounds.endFlatIndex + 1);
+  const lineDescriptors = tableLines.map((lineValue) => {
+    const borderFillCharacter = classifyBrailleTableBorderFillCharacter(lineValue);
+    if (borderFillCharacter !== null) {
+      return {
+        kind: "border",
+        borderFillCharacter,
+      };
+    }
+
+    return {
+      kind: "content",
+      cells: parseBrailleTableContentCells(lineValue),
+    };
+  });
+
+  const contentRows = lineDescriptors
+    .filter((lineDescriptor) => lineDescriptor.kind === "content")
+    .map((lineDescriptor) => lineDescriptor.cells);
+  if (contentRows.length === 0) {
+    return {
+      changed: false,
+      lines: flatLines,
+    };
+  }
+
+  const columnCount = contentRows.reduce(
+    (maxColumns, rowCells) => Math.max(maxColumns, Array.isArray(rowCells) ? rowCells.length : 0),
+    0,
+  );
+  if (columnCount <= 0) {
+    return {
+      changed: false,
+      lines: flatLines,
+    };
+  }
+
+  const normalizedContentRows = contentRows.map((rowCells) => {
+    const normalizedRow = new Array(columnCount).fill("");
+    for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+      const rawCellValue = rowCells[columnIndex] ?? "";
+      normalizedRow[columnIndex] =
+        typeof rawCellValue === "string" ? rawCellValue.replace(/\s+$/u, "") : "";
+    }
+    return normalizedRow;
+  });
+
+  const columnWidths = new Array(columnCount).fill(1);
+  normalizedContentRows.forEach((rowCells) => {
+    for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+      columnWidths[columnIndex] = Math.max(columnWidths[columnIndex], rowCells[columnIndex].length);
+    }
+  });
+
+  const rebuiltTableLines = [];
+  let contentRowIndex = 0;
+  lineDescriptors.forEach((lineDescriptor, relativeLineIndex) => {
+    if (lineDescriptor.kind === "content") {
+      const rowCells = normalizedContentRows[contentRowIndex] ?? [];
+      rebuiltTableLines.push(buildBrailleTableContentLineFromCells(rowCells, columnWidths));
+      contentRowIndex += 1;
+      return;
+    }
+
+    const fillCharacter =
+      relativeLineIndex === 0
+        ? BRAILLE_TABLE_HEADER_FILL_CHARACTER
+        : lineDescriptor.borderFillCharacter;
+    rebuiltTableLines.push(
+      buildBrailleTableBorderLineFromColumnWidths(columnWidths, fillCharacter),
+    );
+  });
+
+  const nextLines = flatLines.slice();
+  let changed = false;
+  for (let relativeLineIndex = 0; relativeLineIndex < rebuiltTableLines.length; relativeLineIndex += 1) {
+    const flatLineIndex = tableBounds.startFlatIndex + relativeLineIndex;
+    if (nextLines[flatLineIndex] !== rebuiltTableLines[relativeLineIndex]) {
+      nextLines[flatLineIndex] = rebuiltTableLines[relativeLineIndex];
+      changed = true;
+    }
+  }
+
+  return {
+    changed,
+    lines: nextLines,
+    tableBounds,
+  };
+}
+
+function isAtBrailleTableDeleteTriggerPosition(lineInput) {
+  if (!isLineInput(lineInput) || !isBrailleTableLineValue(lineInput.value)) {
+    return false;
+  }
+
+  const { selectionStart, isEmpty } = getLineSelectionRange(lineInput);
+  if (!isEmpty || selectionStart !== 0) {
+    return false;
+  }
+
+  if (lineInput.value[0] !== BRAILLE_TABLE_DELIMITER_CHARACTER) {
+    return false;
+  }
+
+  const linePosition = getLinePositionFromInput(lineInput);
+  if (!linePosition) {
+    return false;
+  }
+
+  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  const currentLines = flattenDocumentLines();
+  const tableBounds = findBrailleTableBoundsAroundFlatIndex(currentLines, currentFlatIndex);
+
+  return Boolean(tableBounds && tableBounds.startFlatIndex === currentFlatIndex);
+}
+
+function deleteBrailleTableFromLineInput(lineInput) {
+  if (!isLineInput(lineInput)) {
+    return false;
+  }
+
+  const linePosition = getLinePositionFromInput(lineInput);
+  if (!linePosition) {
+    return false;
+  }
+
+  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  const currentDisplayLines = flattenDocumentLines();
+  const tableBounds = findBrailleTableBoundsAroundFlatIndex(currentDisplayLines, currentFlatIndex);
+  if (!tableBounds) {
+    return false;
+  }
+
+  const deletedLineCount = tableBounds.endFlatIndex - tableBounds.startFlatIndex + 1;
+  if (deletedLineCount <= 0) {
+    return false;
+  }
+
+  const nextDisplayLines = currentDisplayLines.slice();
+  nextDisplayLines.splice(tableBounds.startFlatIndex, deletedLineCount);
+  if (nextDisplayLines.length === 0) {
+    nextDisplayLines.push("");
+  }
+
+  let sourceBufferSnapshot = null;
+  if (isBrailleOnlyEditorMode()) {
+    const sourceLines = readSourceBufferLines(currentDisplayLines.length);
+    sourceLines.splice(tableBounds.startFlatIndex, deletedLineCount);
+    if (sourceLines.length === 0) {
+      sourceLines.push("");
+    }
+
+    state.pages = buildPagesFromFlatLines(nextDisplayLines);
+    writeSourceBufferLines(sourceLines);
+    sourceBufferSnapshot = new Map(lineSourceTextById);
+  } else {
+    state.pages = buildPagesFromFlatLines(nextDisplayLines);
+    sourceBufferSnapshot = buildSourceBufferFromDisplayLines();
+  }
+
+  markDocumentChanged();
+  renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+
+  const nextFocusFlatIndex = Math.min(
+    tableBounds.startFlatIndex,
+    Math.max(0, nextDisplayLines.length - 1),
+  );
+  focusLineByFlatIndex(nextFocusFlatIndex, 0);
+  refreshActiveLineSpacePreview();
+  refreshAllActionStates();
+
+  if (!isBrailleOnlyEditorMode()) {
+    if (state.realtimeTranslationEnabled) {
+      scheduleLiveBraillePreviewRefresh();
+    } else if (hasInlineTranslationOutput()) {
+      setStatus(
+        translationStatusMessage,
+        "Le document a changé. Utilise Ctrl/Cmd+T pour mettre à jour la traduction dans l’éditeur.",
+        "neutral",
+      );
+    }
+  }
+
+  return true;
+}
+
+function setLineInputCaret(lineInput, caretPosition) {
+  if (!(lineInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const safeCaret = Math.max(0, Math.min(caretPosition, lineInput.value.length));
+  lineInput.setSelectionRange(safeCaret, safeCaret);
+  updateLastFocusedLinePosition(lineInput);
+  updateLinePositionLabel(lineInput);
+  updateLineCharacterCounter(lineInput);
+  updateLineInputBfuVisualState(lineInput);
+  refreshActiveLineSpacePreview();
+}
+
+function moveCaretToBrailleTableCell(lineInput, direction = 1) {
+  if (!isLineInput(lineInput)) {
+    return false;
+  }
+
+  const lineValue = lineInput.value;
+  const cellStartPositions = getBrailleTableCellStartPositions(lineValue);
+  if (cellStartPositions.length === 0) {
+    return false;
+  }
+
+  const currentCaret = lineInput.selectionStart ?? 0;
+  let targetCaret = cellStartPositions[0];
+
+  if (direction > 0) {
+    const nextCellStart = cellStartPositions.find((cellStart) => cellStart > currentCaret);
+    targetCaret = Number.isInteger(nextCellStart)
+      ? nextCellStart
+      : cellStartPositions[cellStartPositions.length - 1];
+  } else if (direction < 0) {
+    let previousCellStart = cellStartPositions[0];
+    for (let index = 0; index < cellStartPositions.length; index += 1) {
+      if (cellStartPositions[index] < currentCaret) {
+        previousCellStart = cellStartPositions[index];
+      } else {
+        break;
+      }
+    }
+    targetCaret = previousCellStart;
+  } else {
+    targetCaret = cellStartPositions[0];
+  }
+
+  setLineInputCaret(lineInput, targetCaret);
+  return true;
+}
+
+function snapCaretFromBrailleTableDelimiter(lineInput) {
+  if (!isLineInput(lineInput)) {
+    return false;
+  }
+
+  const lineValue = lineInput.value;
+  if (!isBrailleTableLineValue(lineValue)) {
+    return false;
+  }
+
+  const { selectionStart, selectionEnd, isEmpty } = getLineSelectionRange(lineInput);
+  if (!isEmpty) {
+    return false;
+  }
+
+  const safeCaret = Math.max(0, Math.min(selectionStart, lineValue.length));
+  if (safeCaret === 0 && lineValue[0] === BRAILLE_TABLE_DELIMITER_CHARACTER) {
+    if (isAtBrailleTableDeleteTriggerPosition(lineInput)) {
+      return false;
+    }
+
+    return moveCaretToBrailleTableCell(lineInput, 0);
+  }
+
+  if (safeCaret < lineValue.length && lineValue[safeCaret] === BRAILLE_TABLE_DELIMITER_CHARACTER) {
+    if (moveCaretToBrailleTableCell(lineInput, 1)) {
+      return true;
+    }
+
+    return moveCaretToBrailleTableCell(lineInput, -1);
+  }
+
+  return false;
+}
+
 function computeSourceLineTextFromInputEvent(previousSourceText, lineInput, event) {
   if (!(lineInput instanceof HTMLInputElement)) {
     return previousSourceText;
@@ -2864,6 +3373,182 @@ async function translateLineToBrailleInPlace(lineInput, pageIndex, lineIndex, in
   }
 }
 
+function moveCaretToBrailleTableLineBoundary(lineInput, boundary) {
+  if (!isLineInput(lineInput)) {
+    return false;
+  }
+
+  const cellStartPositions = getBrailleTableCellStartPositions(lineInput.value);
+  if (cellStartPositions.length === 0) {
+    return false;
+  }
+
+  if (boundary === "start") {
+    setLineInputCaret(lineInput, cellStartPositions[0]);
+    return true;
+  }
+
+  if (boundary === "end") {
+    setLineInputCaret(lineInput, cellStartPositions[cellStartPositions.length - 1]);
+    return true;
+  }
+
+  return false;
+}
+
+function preventBrailleTableDelimiterEditFromKeyDown(event, lineInput) {
+  if (!isLineInput(lineInput) || !isBrailleTableLineValue(lineInput.value)) {
+    return false;
+  }
+
+  const canTriggerTableDeleteConfirmation =
+    event.key === "Delete" &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    isAtBrailleTableDeleteTriggerPosition(lineInput);
+
+  if (canTriggerTableDeleteConfirmation) {
+    event.preventDefault();
+
+    const shouldDeleteTable = window.confirm(
+      "Supprimer tout le tableau ? Cette action supprimera l'ensemble du bloc tableau.",
+    );
+
+    if (!shouldDeleteTable) {
+      setStatus(documentStatusMessage, "Suppression du tableau annulée.", "neutral");
+      return true;
+    }
+
+    if (deleteBrailleTableFromLineInput(lineInput)) {
+      setStatus(documentStatusMessage, "Tableau supprimé.", "success");
+      return true;
+    }
+
+    setStatus(documentStatusMessage, "Impossible de supprimer ce tableau.", "error");
+    return true;
+  }
+
+  const { selectionStart, selectionEnd, isEmpty } = getLineSelectionRange(lineInput);
+  const lineValue = lineInput.value;
+  const selectionTouchesProtectedCharacter = lineRangeContainsProtectedBrailleTableCharacter(
+    lineValue,
+    selectionStart,
+    selectionEnd,
+  );
+  const characterBeforeCaret =
+    selectionStart > 0 ? lineValue[selectionStart - 1] ?? "" : "";
+  const characterAtCaret =
+    selectionStart < lineValue.length ? lineValue[selectionStart] ?? "" : "";
+
+  if (event.key === "Backspace") {
+    if (!isEmpty && selectionTouchesProtectedCharacter) {
+      event.preventDefault();
+      snapCaretFromBrailleTableDelimiter(lineInput);
+      return true;
+    }
+
+    if (isEmpty && isProtectedBrailleTableCharacter(characterBeforeCaret)) {
+      event.preventDefault();
+      moveCaretToBrailleTableCell(lineInput, -1);
+      return true;
+    }
+
+    return false;
+  }
+
+  if (event.key === "Delete") {
+    if (!isEmpty && selectionTouchesProtectedCharacter) {
+      event.preventDefault();
+      snapCaretFromBrailleTableDelimiter(lineInput);
+      return true;
+    }
+
+    if (isEmpty && isProtectedBrailleTableCharacter(characterAtCaret)) {
+      event.preventDefault();
+      moveCaretToBrailleTableCell(lineInput, 1);
+      return true;
+    }
+
+    return false;
+  }
+
+  if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) {
+    if (!isEmpty && selectionTouchesProtectedCharacter) {
+      event.preventDefault();
+      snapCaretFromBrailleTableDelimiter(lineInput);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function onLineBeforeInput(event) {
+  const lineInput = event.currentTarget;
+  if (!isLineInput(lineInput) || !isBrailleTableLineValue(lineInput.value)) {
+    return;
+  }
+
+  if (!(event instanceof InputEvent)) {
+    return;
+  }
+
+  const inputType = typeof event.inputType === "string" ? event.inputType : "";
+  if (inputType.length === 0) {
+    return;
+  }
+
+  const { selectionStart, selectionEnd, isEmpty } = getLineSelectionRange(lineInput);
+  const lineValue = lineInput.value;
+  const selectionTouchesProtectedCharacter = lineRangeContainsProtectedBrailleTableCharacter(
+    lineValue,
+    selectionStart,
+    selectionEnd,
+  );
+  const characterBeforeCaret =
+    selectionStart > 0 ? lineValue[selectionStart - 1] ?? "" : "";
+  const characterAtCaret =
+    selectionStart < lineValue.length ? lineValue[selectionStart] ?? "" : "";
+
+  if (inputType.startsWith("insert")) {
+    if (!isEmpty && selectionTouchesProtectedCharacter) {
+      event.preventDefault();
+      snapCaretFromBrailleTableDelimiter(lineInput);
+    }
+    return;
+  }
+
+  if (!inputType.startsWith("delete")) {
+    return;
+  }
+
+  if (!isEmpty && selectionTouchesProtectedCharacter) {
+    event.preventDefault();
+    snapCaretFromBrailleTableDelimiter(lineInput);
+    return;
+  }
+
+  if (
+    isEmpty &&
+    (inputType === "deleteContentBackward" || inputType === "deleteWordBackward") &&
+    isProtectedBrailleTableCharacter(characterBeforeCaret)
+  ) {
+    event.preventDefault();
+    moveCaretToBrailleTableCell(lineInput, -1);
+    return;
+  }
+
+  if (
+    isEmpty &&
+    (inputType === "deleteContentForward" || inputType === "deleteWordForward") &&
+    isProtectedBrailleTableCharacter(characterAtCaret)
+  ) {
+    event.preventDefault();
+    moveCaretToBrailleTableCell(lineInput, 1);
+  }
+}
+
 function onLineInput(event) {
   if (!state.documentConfig) {
     return;
@@ -2902,12 +3587,56 @@ function onLineInput(event) {
     return;
   }
 
+  const startFlatIndex = getFlatLineIndex(pageIndex, lineIndex);
+  const caretAfterInput = lineInput.selectionStart ?? newValue.length;
+
   state.pages[pageIndex][lineIndex] = newValue;
   lineSourceTextById.set(lineInput.id, newValue);
+
+  const normalizedTableResult = normalizeBrailleTableBlockInFlatLines(
+    flattenDocumentLines(),
+    startFlatIndex,
+  );
+  if (normalizedTableResult.changed) {
+    state.pages = buildPagesFromFlatLines(normalizedTableResult.lines);
+  }
+
   markDocumentChanged();
 
+  if (normalizedTableResult.changed) {
+    const sourceBufferSnapshot = buildSourceBufferFromDisplayLines();
+    renderEditorPages({ sourceBuffer: sourceBufferSnapshot });
+    focusLineByFlatIndex(startFlatIndex, caretAfterInput);
+
+    const focusedLinePosition = getLinePositionFromFlatIndex(startFlatIndex);
+    if (focusedLinePosition) {
+      const focusedLineInput = document.querySelector(
+        `#${buildLineInputId(focusedLinePosition.pageIndex, focusedLinePosition.lineIndex)}`,
+      );
+      if (focusedLineInput instanceof HTMLInputElement) {
+        snapCaretFromBrailleTableDelimiter(focusedLineInput);
+      }
+    }
+
+    refreshActiveLineSpacePreview();
+    refreshAllActionStates();
+
+    if (!isBrailleOnlyEditorMode()) {
+      if (state.realtimeTranslationEnabled) {
+        scheduleLiveBraillePreviewRefresh();
+      } else if (hasInlineTranslationOutput()) {
+        setStatus(
+          translationStatusMessage,
+          "Le document a changé. Utilise Ctrl/Cmd+T pour mettre à jour la traduction dans l’éditeur.",
+          "neutral",
+        );
+      }
+    }
+
+    return;
+  }
+
   if (state.documentType === DOCUMENT_TYPE_BRAILLE) {
-    const startFlatIndex = getFlatLineIndex(pageIndex, lineIndex);
     const wrapResult = applyDisplayWordWrapFromFlatIndex(startFlatIndex);
     if (wrapResult.changed) {
       const sourceBufferSnapshot = new Map(lineSourceTextById);
@@ -2951,6 +3680,14 @@ function onLineFocus(event) {
   updateLinePositionLabel(lineInput);
   updateLineInputBfuVisualState(lineInput);
   refreshActiveLineSpacePreview();
+
+  window.requestAnimationFrame(() => {
+    if (document.activeElement !== lineInput) {
+      return;
+    }
+
+    snapCaretFromBrailleTableDelimiter(lineInput);
+  });
 }
 
 function onLineSelectionChange(event) {
@@ -2962,6 +3699,7 @@ function onLineSelectionChange(event) {
   updateLastFocusedLinePosition(lineInput);
   updateLinePositionLabel(lineInput);
   updateLineInputBfuVisualState(lineInput);
+  snapCaretFromBrailleTableDelimiter(lineInput);
 }
 
 function onLineBlur(event) {
@@ -3419,6 +4157,10 @@ function onLineNavigationKeyDown(event) {
     return;
   }
 
+  if (preventBrailleTableDelimiterEditFromKeyDown(event, lineInput)) {
+    return;
+  }
+
   if (event.ctrlKey || event.metaKey || event.altKey) {
     return;
   }
@@ -3429,6 +4171,28 @@ function onLineNavigationKeyDown(event) {
     event.key === "Home" ||
     event.key === "End"
   ) {
+    if (isBrailleTableLineValue(lineInput.value)) {
+      event.preventDefault();
+
+      if (event.key === "ArrowLeft") {
+        moveCaretToBrailleTableCell(lineInput, -1);
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        moveCaretToBrailleTableCell(lineInput, 1);
+        return;
+      }
+
+      if (event.key === "Home") {
+        moveCaretToBrailleTableLineBoundary(lineInput, "start");
+        return;
+      }
+
+      moveCaretToBrailleTableLineBoundary(lineInput, "end");
+      return;
+    }
+
     // Let the browser move the caret first, then refresh the compact l#p#c# marker.
     window.requestAnimationFrame(() => {
       if (document.activeElement !== lineInput) {
@@ -3511,6 +4275,7 @@ function createLineEditor(pageIndex, lineIndex, value, sourceBuffer = null) {
     lineInput.setAttribute("aria-labelledby", labelId);
   }
   lineInput.addEventListener("keydown", onLineNavigationKeyDown);
+  lineInput.addEventListener("beforeinput", onLineBeforeInput);
   lineInput.addEventListener("input", onLineInput);
   lineInput.addEventListener("focus", onLineFocus);
   lineInput.addEventListener("keyup", onLineSelectionChange);

@@ -90,8 +90,19 @@
   rupture de page braille/imprimée.
 - Ouverture étendue des fichiers: support natif `.gnp`/`.gnb`/`.gbs` conservé,
   avec import texte de documents externes `.doc`, `.docx`, `.odt`, `.odf`,
-  `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown` convertis automatiquement en
-  document normal interne.
+  `.xls`, `.xlsx`, `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown` convertis
+  automatiquement en document normal interne.
+- Import Excel enrichi (`.xls` / `.xlsx`): generation automatique d'un tableau
+  avec delimiteurs braille (`points 1-2-3-4-5-6`) et lignes de structure
+  conformes a la demande utilisateur (bord haut, ligne d'entete, separateur,
+  lignes de contenu, bord de fin).
+- Edition de tableaux braille importes: les delimiteurs `points 1-2-3-4-5-6`
+  sont proteges (non effacables), et la navigation horizontale du curseur
+  saute de cellule en cellule en se positionnant juste apres chaque delimiteur.
+  Depuis le premier delimiteur de la premiere ligne du tableau, la touche
+  `Delete` declenche une confirmation de suppression du tableau complet.
+  Le reajustement des largeurs se base uniquement sur le texte des cellules
+  (titres de colonnes et items), pas sur les caracteres speciaux de structure.
 - Import enrichi des emphases bureautiques: conservation de `gras/italique/
   soulignement` sur `.docx`, `.odt/.odf` et `.rtf` via conversion en balises
   BFU (`<b>`, `<i>`, `<u>`) avant traduction. Les fichiers `.doc` legacy
@@ -153,6 +164,12 @@
 - Balise de colonne braille persistante (`<cb#>`): insertion d'un décalage de
   début de ligne (espaces braille) appliqué sur la ligne courante puis sur les
   lignes suivantes tant que le bloc n'est pas fermé via `<cb>` ou `</cb>`.
+- Balise de paragraphe ponctuelle (`<par>`): insertion d'un retrait de
+  2 cellules braille sur la ligne courante uniquement (équivalent imprimé:
+  5 caractères), sans persistance sur la ligne suivante.
+- Persistance compressee des documents natifs: les fichiers `.gnp` et `.gnb`
+  sont stockes compresses (niveau maximal) et decompressees en memoire a
+  l'ouverture, avec compatibilite des anciens fichiers non compresses.
 - En document normal (`.gnp`), zone d’édition large non contrainte par les
   paramètres braille (lignes/page, caractères/ligne).
 - En document braille (`.gnb`), retour automatique des mots: si une ligne
@@ -204,6 +221,49 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-11-03 : compression maximale des documents natifs:
+  - enregistrement des `.gnp`/`.gnb` en format compresse (Brotli qualite max) ;
+  - decompresion automatique en memoire a l'ouverture ;
+  - compatibilite maintenue avec les anciens `.gnp`/`.gnb` non compresses.
+  Fichiers touches: `src/main/gbs-document-service.js`, `README.md`,
+  `.github/project-memory.md`.
+
+- 2026-11-03 : contraintes d'edition des tableaux braille:
+  - ajustement des delimiteurs de colonnes selon la largeur des colonnes
+    (entetes + valeurs) ;
+  - protection des caracteres delimiteurs `points 1-2-3-4-5-6` contre
+    suppression/remplacement ;
+  - protection etendue aux autres caracteres speciaux de structure du tableau ;
+  - navigation horizontale par sauts de cellule, curseur positionne juste
+    apres le delimiteur de debut de cellule.
+  - `Delete` sur le premier delimiteur de la premiere ligne demande la
+    suppression du bloc tableau complet ; si confirme, tout le tableau est
+    retire.
+  - le reajustement des colonnes est calcule uniquement depuis le texte des
+    cellules (entetes/items).
+  Fichiers touches: `src/main/gbs-document-service.js`, `src/renderer/app.js`,
+  `README.md`, `.github/project-memory.md`.
+
+- 2026-11-03 : import Excel structure en tableau braille:
+  - prise en charge de `.xls` et `.xlsx` dans la boite d'ouverture et le
+    pipeline d'import ;
+  - generation d'un tableau texte structure avec:
+    - bord haut: `123456 ... 1245 ... 123456` ;
+    - ligne d'entete: `123456` au debut et avant chaque titre de colonne ;
+    - separateur: `123456 ... 2356 ... 123456` ;
+    - lignes de contenu: `123456` au debut et avant chaque valeur ;
+    - fin de tableau identique au separateur.
+  Fichiers touches: `src/main/gbs-document-service.js`, `README.md`,
+  `package.json`, `package-lock.json`, `.github/project-memory.md`.
+
+- 2026-11-03 : ajout d'une balise de paragraphe ponctuelle `<par>`:
+  - la balise applique un retrait de 2 cellules braille sur la ligne courante
+    uniquement ;
+  - la ligne suivante revient automatiquement au début normal ;
+  - `</par>` est accepté comme fermeture neutre (aucun retrait ajouté).
+  Fichiers touches: `src/main/braille-service.js`, `README.md`,
+  `.github/project-memory.md`.
 
 - 2026-11-03 : ajout d'une pipeline de build Linux conteneurisee (Podman):
   - creation d'un Dockerfile dedie pour l'environnement electron-builder
