@@ -86,6 +86,11 @@ const BRAILLE_COLUMN_BLOCK_TAG_NAME = "cb";
 const BRAILLE_COLUMN_BLOCK_MAX_INDENT = 120;
 const BRAILLE_PARAGRAPH_TAG_NAME = "par";
 const BRAILLE_PARAGRAPH_BRAILLE_INDENT = 2;
+const BRAILLE_ANCHOR_TAG_NAME = "anc";
+const BRAILLE_ANCHOR_TAG_MAX_OFFSET = 240;
+const BRAILLE_TABLE_DELIMITER_CHARACTER = String.fromCodePoint(0x283f); // dots 1-2-3-4-5-6
+const BRAILLE_TABLE_HEADER_FILL_CHARACTER = String.fromCodePoint(0x281b); // dots 1-2-4-5
+const BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER = String.fromCodePoint(0x2836); // dots 2-3-5-6
 
 let isTableLoadingReady = false;
 let tableLoadingFailure = null;
@@ -522,6 +527,42 @@ function parseParagraphTagAt(inputText, startIndex) {
   return null;
 }
 
+function parseAnchorTagAt(inputText, startIndex) {
+  if (inputText[startIndex] !== "<") {
+    return null;
+  }
+
+  const closingBracketIndex = inputText.indexOf(">", startIndex + 1);
+  if (closingBracketIndex === -1) {
+    return null;
+  }
+
+  const rawTagContent = inputText
+    .slice(startIndex + 1, closingBracketIndex)
+    .trim()
+    .toLowerCase();
+  if (rawTagContent.length === 0) {
+    return null;
+  }
+
+  const openTagMatch = /^anc(?:\s*(\d{1,3}))?$/u.exec(rawTagContent);
+  if (!openTagMatch) {
+    return null;
+  }
+
+  const requestedOffset =
+    openTagMatch[1] === undefined ? null : Number.parseInt(openTagMatch[1], 10);
+  const safeOffset =
+    Number.isInteger(requestedOffset)
+      ? Math.max(1, Math.min(requestedOffset, BRAILLE_ANCHOR_TAG_MAX_OFFSET))
+      : null;
+
+  return {
+    minEndColumn: safeOffset === null ? null : safeOffset + 1,
+    length: closingBracketIndex - startIndex + 1,
+  };
+}
+
 function appendComputedCharacter(characters, styleFlags, character, activeStyleDepth) {
   characters.push(character);
 
@@ -555,6 +596,109 @@ function appendColumnIndentPadding(characters, styleFlags, lineColumnIndex, targ
   return nextLineColumnIndex;
 }
 
+function getOrCreateLineFrameConfig(lineFrameConfigs, lineIndex) {
+  if (!Array.isArray(lineFrameConfigs)) {
+    return null;
+  }
+
+  while (lineFrameConfigs.length <= lineIndex) {
+    lineFrameConfigs.push({
+      enabled: false,
+      minEndColumn: null,
+      closeWithTableEndLine: true,
+    });
+  }
+
+  return lineFrameConfigs[lineIndex];
+}
+
+function applyAnchorFrameToBrailleLine(lineValue, minEndColumn = null) {
+  const normalizedLine = typeof lineValue === "string" ? lineValue : "";
+  let framedLine = `${BRAILLE_TABLE_DELIMITER_CHARACTER}${normalizedLine}`;
+
+  const naturalEndColumn = framedLine.length + 1;
+  if (Number.isInteger(minEndColumn) && minEndColumn > naturalEndColumn) {
+    framedLine += " ".repeat(minEndColumn - naturalEndColumn);
+  }
+
+  return `${framedLine}${BRAILLE_TABLE_DELIMITER_CHARACTER}`;
+}
+
+function buildBrailleTableBorderLineFromFramedLine(framedLine, fillCharacter) {
+  const normalizedLine = typeof framedLine === "string" ? framedLine : "";
+  const lineLength = normalizedLine.length;
+  const safeFillCharacter =
+    typeof fillCharacter === "string" && fillCharacter.length > 0
+      ? fillCharacter
+      : BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER;
+
+  if (lineLength <= 1) {
+    return BRAILLE_TABLE_DELIMITER_CHARACTER;
+  }
+
+  if (lineLength === 2) {
+    return `${BRAILLE_TABLE_DELIMITER_CHARACTER}${BRAILLE_TABLE_DELIMITER_CHARACTER}`;
+  }
+
+  return (
+    BRAILLE_TABLE_DELIMITER_CHARACTER +
+    safeFillCharacter.repeat(lineLength - 2) +
+    BRAILLE_TABLE_DELIMITER_CHARACTER
+  );
+}
+
+function buildBrailleTableStartLineFromFramedLine(framedLine) {
+  return buildBrailleTableBorderLineFromFramedLine(
+    framedLine,
+    BRAILLE_TABLE_HEADER_FILL_CHARACTER,
+  );
+}
+
+function buildBrailleTableEndLineFromFramedLine(framedLine) {
+  return buildBrailleTableBorderLineFromFramedLine(
+    framedLine,
+    BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER,
+  );
+}
+
+function applyAnchorFramesToBrailleText(outputText, lineFrameConfigs) {
+  if (!Array.isArray(lineFrameConfigs) || lineFrameConfigs.length === 0) {
+    return outputText;
+  }
+
+  const lines = (typeof outputText === "string" ? outputText : "").split("\n");
+
+  let insertedLineOffset = 0;
+  lineFrameConfigs.forEach((lineFrameConfig, lineIndex) => {
+    if (!lineFrameConfig?.enabled) {
+      return;
+    }
+
+    const targetLineIndex = lineIndex + insertedLineOffset;
+
+    while (targetLineIndex >= lines.length) {
+      lines.push("");
+    }
+
+    const framedLine = applyAnchorFrameToBrailleLine(
+      lines[targetLineIndex],
+      lineFrameConfig.minEndColumn,
+    );
+
+    const startLine = buildBrailleTableStartLineFromFramedLine(framedLine);
+    const replacementLines = [startLine, framedLine];
+
+    if (lineFrameConfig.closeWithTableEndLine !== false) {
+      replacementLines.push(buildBrailleTableEndLineFromFramedLine(framedLine));
+    }
+
+    lines.splice(targetLineIndex, 1, ...replacementLines);
+    insertedLineOffset += replacementLines.length - 1;
+  });
+
+  return lines.join("\n");
+}
+
 function parseTextWithBfuStyleMarkers(inputText) {
   const normalizedInputText =
     typeof inputText === "string"
@@ -569,9 +713,12 @@ function parseTextWithBfuStyleMarkers(inputText) {
   };
   let activeColumnIndent = null;
   let currentLineColumnIndex = 0;
+  let currentLineIndex = 0;
+  const lineFrameConfigs = [];
 
   let hasBfuStyleMarkers = false;
   let hasColumnIndentMarkers = false;
+  let hasAnchorFrameMarkers = false;
 
   for (let index = 0; index < normalizedInputText.length; index += 1) {
     const columnIndentTag = parseColumnBlockTagAt(normalizedInputText, index);
@@ -610,6 +757,19 @@ function parseTextWithBfuStyleMarkers(inputText) {
       continue;
     }
 
+    const anchorTag = parseAnchorTagAt(normalizedInputText, index);
+    if (anchorTag) {
+      hasAnchorFrameMarkers = true;
+      const lineFrameConfig = getOrCreateLineFrameConfig(lineFrameConfigs, currentLineIndex);
+      if (lineFrameConfig) {
+        lineFrameConfig.enabled = true;
+        lineFrameConfig.minEndColumn = anchorTag.minEndColumn;
+      }
+
+      index += anchorTag.length - 1;
+      continue;
+    }
+
     const styleTag = parseMarkupTagAt(normalizedInputText, index);
     if (styleTag) {
       hasBfuStyleMarkers = true;
@@ -636,6 +796,7 @@ function parseTextWithBfuStyleMarkers(inputText) {
 
     if (currentCharacter === "\n") {
       currentLineColumnIndex = 0;
+      currentLineIndex += 1;
       if (activeColumnIndent !== null) {
         currentLineColumnIndex = appendColumnIndentPadding(
           plainTextCharacters,
@@ -654,6 +815,8 @@ function parseTextWithBfuStyleMarkers(inputText) {
     internalStyleFlagsByChar,
     hasBfuStyleMarkers,
     hasColumnIndentMarkers,
+    hasAnchorFrameMarkers,
+    lineFrameConfigs,
   };
 }
 
@@ -830,16 +993,21 @@ function translateTextToBrailleNative(table, inputText) {
 
 function translateTextToBrailleWithBfuStyles(table, inputText) {
   const parsedInput = parseTextWithBfuStyleMarkers(inputText);
-  if (!parsedInput.hasBfuStyleMarkers && !parsedInput.hasColumnIndentMarkers) {
+  if (
+    !parsedInput.hasBfuStyleMarkers &&
+    !parsedInput.hasColumnIndentMarkers &&
+    !parsedInput.hasAnchorFrameMarkers
+  ) {
     return translateTextToBrailleNative(table, inputText);
   }
 
   if (!parsedInput.hasBfuStyleMarkers) {
-    return translateTextToBrailleNative(table, parsedInput.plainText);
+    const outputText = translateTextToBrailleNative(table, parsedInput.plainText);
+    return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
   }
 
   if (parsedInput.plainText.length === 0) {
-    return "";
+    return applyAnchorFramesToBrailleText("", parsedInput.lineFrameConfigs);
   }
 
   const typeformMasks = getBfuTypeformMasksForTable(table);
@@ -847,16 +1015,18 @@ function translateTextToBrailleWithBfuStyles(table, inputText) {
 
   const hasActiveTypeform = typeformValues.some((maskValue) => maskValue > 0);
   if (!hasActiveTypeform) {
-    return translateTextToBrailleNative(table, parsedInput.plainText);
+    const outputText = translateTextToBrailleNative(table, parsedInput.plainText);
+    return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
   }
 
   const outputText = translateStringWithOptionalTypeforms(table, parsedInput.plainText, typeformValues);
 
   if (typeof outputText === "string") {
-    return outputText;
+    return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
   }
 
-  return translateTextToBrailleNative(table, parsedInput.plainText);
+  const fallbackOutputText = translateTextToBrailleNative(table, parsedInput.plainText);
+  return applyAnchorFramesToBrailleText(fallbackOutputText, parsedInput.lineFrameConfigs);
 }
 
 function resolveNativeTableFile(table) {
@@ -923,15 +1093,27 @@ function translateForProduction(table, payload) {
   }
 
   const parsedInput = parseTextWithBfuStyleMarkers(payload.inputText);
-  if (parsedInput.hasBfuStyleMarkers) {
+  if (parsedInput.hasBfuStyleMarkers || parsedInput.hasAnchorFrameMarkers) {
     const outputText = translateWithLiblouisJavascript(table, payload);
+
+    let warning =
+      "La traduction contient des marqueurs de style BFU et reste traitee par liblouis-js " +
+      "pour conserver l'emphase actuelle.";
+    if (parsedInput.hasAnchorFrameMarkers && parsedInput.hasBfuStyleMarkers) {
+      warning =
+        "La traduction contient des marqueurs de style BFU et des balises <anc>; " +
+        "elle reste traitee par liblouis-js pour conserver l'emphase et l'encadre.";
+    } else if (parsedInput.hasAnchorFrameMarkers) {
+      warning =
+        "La traduction contient des balises <anc> et reste traitee par liblouis-js " +
+        "pour appliquer l'encadre ligne par ligne.";
+    }
+
     return normalizeTranslationResult({
       outputText,
       engine: "liblouis-js-production-fallback",
       executionMode: "production",
-      warning:
-        "La traduction contient des marqueurs de style BFU et reste traitee par liblouis-js " +
-        "pour conserver l'emphase actuelle.",
+      warning,
     });
   }
 

@@ -374,6 +374,26 @@ Notes:
 - `&lt;/par&gt;` est accepté et ignoré (pas de décalage ajouté) ;
 - comme `cb`, la balise `par` est interprétée puis retirée avant traduction.
 
+### Encadré braille de ligne (`<anc>`)
+
+Tu peux utiliser la balise `&lt;anc&gt;` pour encadrer la ligne courante avec le
+caractère braille `points 1-2-3-4-5-6` :
+
+- `&lt;anc&gt;` ajoute une ligne de début (type bord haut), puis la ligne encadrée
+   (`points 1-2-3-4-5-6` au début et à la fin), puis une ligne de fin de type
+   fin de tableau ;
+- `&lt;anc12&gt;` applique le même encadré, avec un caractère de fin positionné au
+   minimum au 13e caractère (si nécessaire, des espaces sont ajoutés avant la
+   fin), et les lignes de début/fin reprennent cette même largeur ;
+- si la ligne contient déjà plus de texte que la position demandée, le
+   caractère de fin reste placé après le dernier caractère de la ligne.
+
+Notes:
+
+- la balise `anc` s'applique à la ligne qui la contient ;
+- comme `cb` et `par`, la balise `anc` est interprétée puis retirée avant
+   traduction.
+
 ### Références de conformité BFU
 
 - Table liblouis française abrégée BFU :

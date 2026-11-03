@@ -181,6 +181,11 @@
 - Balise de paragraphe ponctuelle (`<par>`): insertion d'un retrait de
   2 cellules braille sur la ligne courante uniquement (équivalent imprimé:
   5 caractères), sans persistance sur la ligne suivante.
+- Balise d'encadre ponctuelle (`<anc>` / `<anc#>`): encadre la ligne courante
+  avec une ligne de debut (bord haut), la ligne encadree (`points 1-2-3-4-5-6`
+  au debut et a la fin), puis une ligne de fermeture type fin de tableau ;
+  avec `<anc#>`, le caractere de fin est force au minimum a la colonne `# + 1`
+  et les lignes de debut/fin s'ajustent a la meme largeur.
 - Persistance compressee des documents natifs: les fichiers `.gnp` et `.gnb`
   sont stockes compresses (niveau maximal) et decompressees en memoire a
   l'ouverture, avec compatibilite des anciens fichiers non compresses.
@@ -235,6 +240,18 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-11-03 : ajout de la balise d'encadre braille `<anc>`:
+  - `<anc>` ajoute une ligne de debut (bord haut), puis la ligne encadree
+    (`points 1-2-3-4-5-6` en debut et fin), puis une ligne de fin ;
+  - `<anc#>` force la position minimale du caractere de fin a la colonne
+    `# + 1` (ex. `<anc12>` -> fin au minimum en colonne 13) ;
+  - les lignes de debut et de fin s'ajustent a la largeur effective de
+    l'encadre ;
+  - en mode production, presence de `anc` force un traitement liblouis-js pour
+    garantir l'encadre ligne par ligne.
+  Fichiers touches: `src/main/braille-service.js`, `README.md`,
+  `.github/project-memory.md`.
 
 - 2026-11-03 : repositionnement du curseur sur le texte editable en tableau:
   - sur les lignes de tableau avec texte, si le curseur tombe sur la structure
