@@ -264,6 +264,19 @@ Le binaire non empaqueté est aussi disponible ici :
 9. Enregistrer le document avec **Enregistrer le document**.
    - document normal : extension `.gnp`
    - document braille : extension `.gnb`
+   En document braille, **Envoyer le BRF à l’embosseuse…** transmet les pages
+   de l’éditeur au spouleur de l’imprimante système par défaut sous Windows ou
+   Linux, en mode brut (`RAW` / `lp -o raw`). Le flux utilise le Braille ASCII
+   standard à six points: les retours de ligne séparent les lignes et le saut
+   de page BRF sépare les pages. Les cellules Unicode Braille à six points sont
+   converties; les cellules utilisant les points 7/8 ou les caractères non
+   représentables sont refusés explicitement plutôt que perdus. L’envoi porte
+   sur le document/volume actuellement ouvert. Vérifie que le spouleur et le
+   pilote de l’embosseuse acceptent les travaux BRF RAW.
+   Tu peux aussi exporter ce même contenu par **Fichier > Exporter le document
+   braille en BRF…** ou le bouton **Exporter en .brf…**. Le fichier exporté
+   contient les caractères Braille ASCII, les fins de ligne et les sauts de
+   page BRF; l’export ne modifie pas le document `.gnb`.
 10. En document normal (`.gnp`), choisir le sens de traduction (texte → braille ou braille → texte).
 11. En document normal (`.gnp`), activer ou désactiver la **traduction en temps réel** selon ton besoin :
    - activée : conversion instantanée vers le braille pendant la saisie ;

@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/verifier-creation-csharp-net10.mjs",
+        "timeout": 5
+      }
+    ]
+  }
+}

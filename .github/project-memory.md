@@ -13,6 +13,14 @@
 - Les sauts de page explicites (`\f`) produits par le moteur natif sont
   conserves jusqu'au renderer pour permettre le decoupage correct des pages
   braille.
+- L'envoi d'un document braille `.gnb` convertit les cellules Unicode à six
+  points en Braille ASCII BRF, puis transmet les octets au spouleur RAW par
+  défaut (CUPS sous Linux, Winspool sous Windows); les cellules 7/8 points sont
+  refusées car le BRF standard ne les représente pas.
+- L'export BRF sauvegarde ce même flux en fichier `.brf` via le dialogue natif,
+  sans modifier le document `.gnb`.
+- À valider avec les modèles d'embosseuses et pilotes visés; si un appareil
+  exige le flux BRF brut, ajouter ensuite un parcours de spool/export adapté.
 - Runtime natif present dans le projet:
   - `native/liblouisutdml/bin/file2brl.exe` ;
   - DLL associees (`liblouis.dll`, `liblouisutdml.dll`) ;
@@ -240,6 +248,25 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-11-04 : ajout de l'impression des documents braille:
+  - bouton et commande **Fichier > Envoyer le BRF à l'embosseuse**;
+  - raccourci `Ctrl/Cmd+P` pour lancer l'envoi au spouleur;
+  - flux éditeur converti/validé en Braille ASCII six points et envoyé en mode
+    brut à l'imprimante système par défaut; refus des cellules 7/8 points;
+  - envoi limité au document/volume actuellement ouvert;
+  - export `.brf` du même flux depuis l'éditeur et le menu **Fichier**,
+    sans modifier le `.gnb`.
+  Fichiers touchés: `src/main/braille-print-service.js`, `src/main/main.js`,
+  `src/main/preload.js`, `src/renderer/app.js`, `src/renderer/index.html`,
+  `README.md`, `.github/project-memory.md`.
+
+- 2026-11-04 : correctif de reactivite du workspace pour les requetes Copilot:
+  - exclusion des dossiers volumineux locaux (`node_modules`, `dist`,
+    `coverage`) de la surveillance fichiers et de la recherche VS Code ;
+  - objectif: eviter les blocages de l'extension host observes a l'ouverture
+    du depot et retablir un envoi de requetes plus stable.
+  Fichiers touches: `.vscode/settings.json`, `.github/project-memory.md`.
 
 - 2026-11-03 : ajout de la balise d'encadre braille `<anc>`:
   - `<anc>` ajoute une ligne de debut (bord haut), puis la ligne encadree

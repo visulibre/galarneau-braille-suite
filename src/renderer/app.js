@@ -99,6 +99,8 @@ const applyItalicStyleButton = document.querySelector("#apply-italic-style-butto
 const applyUnderlineStyleButton = document.querySelector("#apply-underline-style-button");
 const bfuStyleHelp = document.querySelector("#bfu-style-help");
 const closeDocumentButton = document.querySelector("#close-document-button");
+const exportBrailleDocumentButton = document.querySelector("#export-braille-document-button");
+const printBrailleDocumentButton = document.querySelector("#print-braille-document-button");
 const saveDocumentButton = document.querySelector("#save-document-button");
 const activeDocumentFile = document.querySelector("#active-document-file");
 const activeTableLabel = document.querySelector("#active-table-label");
@@ -996,6 +998,14 @@ function refreshDocumentActionButtons() {
     applyUnderlineStyleButton.disabled = disableBfuStyleActions || isUnderlineUnsupported;
   }
   closeDocumentButton.disabled = !hasDocument || isFileBusy || isTranslationBusy;
+  if (printBrailleDocumentButton instanceof HTMLButtonElement) {
+    printBrailleDocumentButton.disabled =
+      !isBrailleDocument || isFileBusy || isTranslationBusy;
+  }
+  if (exportBrailleDocumentButton instanceof HTMLButtonElement) {
+    exportBrailleDocumentButton.disabled =
+      !isBrailleDocument || isFileBusy || isTranslationBusy;
+  }
   saveDocumentButton.disabled = !hasDocument || isFileBusy || isTranslationBusy;
   if (showSpaceMarkersToggle instanceof HTMLInputElement) {
     showSpaceMarkersToggle.disabled = !hasDocument || isFileBusy || isTranslationBusy;
@@ -6195,6 +6205,100 @@ async function onSaveDocumentAs() {
   await saveDocumentWithOptions({ forcePrompt: true });
 }
 
+async function onPrintBrailleDocument() {
+  if (!state.documentConfig || state.documentType !== DOCUMENT_TYPE_BRAILLE) {
+    setStatus(
+      documentStatusMessage,
+      "L’impression est disponible uniquement pour un document braille (.gnb).",
+      "neutral",
+    );
+    return;
+  }
+
+  if (isFileBusy || isTranslationBusy) {
+    return;
+  }
+
+  isFileBusy = true;
+  refreshAllActionStates();
+
+  try {
+    assertBrailleApiAvailable();
+    const response = await window.brailleApi.printBrailleDocument({
+      title: state.filePath ? toFileName(state.filePath) : "Document braille",
+      pages: state.pages.map((page) => page.slice()),
+    });
+
+    if (!response || typeof response !== "object") {
+      throw new Error("La réponse du système d’impression est invalide.");
+    }
+
+    if (response.canceled === true) {
+      setStatus(documentStatusMessage, "Impression annulée.", "neutral");
+    } else if (response.printed === true) {
+      setStatus(documentStatusMessage, "Flux BRF envoyé au spouleur de l’imprimante par défaut.", "success");
+    } else {
+      const reason =
+        typeof response.reason === "string" && response.reason.length > 0
+          ? response.reason
+          : "Le système d’impression a refusé le travail.";
+      throw new Error(reason);
+    }
+  } catch (error) {
+    setStatus(documentStatusMessage, `Erreur d’impression: ${getErrorMessage(error)}`, "error");
+  } finally {
+    isFileBusy = false;
+    refreshAllActionStates();
+  }
+}
+
+async function onExportBrailleDocument() {
+  if (!state.documentConfig || state.documentType !== DOCUMENT_TYPE_BRAILLE) {
+    setStatus(
+      documentStatusMessage,
+      "L’export BRF est disponible uniquement pour un document braille (.gnb).",
+      "neutral",
+    );
+    return;
+  }
+
+  if (isFileBusy || isTranslationBusy) {
+    return;
+  }
+
+  isFileBusy = true;
+  refreshAllActionStates();
+
+  try {
+    assertBrailleApiAvailable();
+    const response = await window.brailleApi.exportBrailleDocument({
+      title: state.filePath ? toFileName(state.filePath) : "Document braille",
+      pages: state.pages.map((page) => page.slice()),
+    });
+
+    if (!response || typeof response !== "object") {
+      throw new Error("La réponse de l’export BRF est invalide.");
+    }
+
+    if (response.canceled === true) {
+      setStatus(documentStatusMessage, "Export BRF annulé.", "neutral");
+    } else if (typeof response.filePath === "string" && response.filePath.length > 0) {
+      setStatus(
+        documentStatusMessage,
+        `Document BRF exporté: ${toFileName(response.filePath)}.`,
+        "success",
+      );
+    } else {
+      throw new Error("Le chemin du fichier BRF exporté est invalide.");
+    }
+  } catch (error) {
+    setStatus(documentStatusMessage, `Erreur d’export BRF: ${getErrorMessage(error)}`, "error");
+  } finally {
+    isFileBusy = false;
+    refreshAllActionStates();
+  }
+}
+
 function coerceBoundedInteger(value, fallbackValue, min, max) {
   if (!Number.isInteger(value) || value < min || value > max) {
     return fallbackValue;
@@ -6429,6 +6533,16 @@ function onMenuActionRequest(payload) {
     return;
   }
 
+  if (payload.action === "print-braille-document") {
+    void onPrintBrailleDocument();
+    return;
+  }
+
+  if (payload.action === "export-braille-document") {
+    void onExportBrailleDocument();
+    return;
+  }
+
   if (payload.action === "translate-document") {
     void runFullDocumentTranslation();
     return;
@@ -6556,6 +6670,12 @@ if (applyUnderlineStyleButton instanceof HTMLButtonElement) {
   applyUnderlineStyleButton.addEventListener("click", onApplyUnderlineStyle);
 }
 saveDocumentButton.addEventListener("click", onSaveDocument);
+if (exportBrailleDocumentButton instanceof HTMLButtonElement) {
+  exportBrailleDocumentButton.addEventListener("click", onExportBrailleDocument);
+}
+if (printBrailleDocumentButton instanceof HTMLButtonElement) {
+  printBrailleDocumentButton.addEventListener("click", onPrintBrailleDocument);
+}
 closeDocumentButton.addEventListener("click", onCloseDocumentRequest);
 translationForm.addEventListener("submit", onTranslate);
 inputModeRadios.forEach((radio) => {

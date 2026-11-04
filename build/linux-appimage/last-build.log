@@ -1,0 +1,30 @@
+[1/2] Build image Podman: gbs-linux-appimage-builder:latest
+STEP 1/8: FROM node:20-bookworm
+STEP 2/8: ENV DEBIAN_FRONTEND=noninteractive
+--> Using cache 1af615d4f21cc0b939959ff1f9cc9301f0451d70e220f222de4accbca146690e
+--> 1af615d4f21c
+STEP 3/8: ENV npm_config_loglevel=warn
+--> Using cache 160cd22b84897501d0ba85abd8e470c91fb3c5805dcaa2eca227d783b4857368
+--> 160cd22b8489
+STEP 4/8: ENV ELECTRON_CACHE=/tmp/electron-cache
+--> Using cache d422a493cae9f9229e18269a169558163146242df54d8c9b1218c6be49e7bd19
+--> d422a493cae9
+STEP 5/8: ENV ELECTRON_BUILDER_CACHE=/tmp/electron-builder-cache
+--> Using cache 2942fdb20e2ddccca429b81534a1b1f164bfe59c29c9a4c9eacfdeab78d98d24
+--> 2942fdb20e2d
+STEP 6/8: RUN apt-get update   && apt-get install -y --no-install-recommends     ca-certificates     git     python3     make     g++     rsync     file     desktop-file-utils     xz-utils     squashfs-tools     fakeroot     libfuse2     libarchive-tools     rpm     zsync   && rm -rf /var/lib/apt/lists/*
+--> Using cache 908e320c7aea32499abb6d49fd002e12573f595943ba3ad80d1d4b4a635b08d8
+--> 908e320c7aea
+STEP 7/8: WORKDIR /work
+--> Using cache 6874641d399ac3fb3f7e5b8c0455d9d1ae3fb58ffe478dcb4d1596814c44f74a
+--> 6874641d399a
+STEP 8/8: CMD ["/bin/bash", "-lc", "echo Use scripts/build-linux-appimage-podman.ps1 to run this image"]
+--> Using cache 6ae7fea4d749b783d93b73a4b4903ce50137e37285df5b215ec2a6e4ca707033
+COMMIT gbs-linux-appimage-builder:latest
+--> 6ae7fea4d749
+Successfully tagged localhost/gbs-linux-appimage-builder:latest
+6ae7fea4d749b783d93b73a4b4903ce50137e37285df5b215ec2a6e4ca707033
+[2/2] Build AppImage Linux dans le conteneur
+generee: line 1: set: pipefail
+: invalid option name
+Build termine. Verifie le dossier dist/.

@@ -4,6 +4,7 @@ const brailleService = require("./braille-service");
 const brlapiLinuxService = require("./brlapi-linux-service");
 const nvdaWindowsService = require("./nvda-windows-service");
 const gbsDocumentService = require("./gbs-document-service");
+const braillePrintService = require("./braille-print-service");
 
 app.commandLine.appendSwitch("force-renderer-accessibility");
 if (
@@ -144,6 +145,15 @@ function buildApplicationMenu() {
           accelerator: "CmdOrCtrl+Shift+S",
           click: () => sendMenuActionToRenderer("save-document-as"),
         },
+        {
+          label: "Envoyer le BRF à l’embosseuse…",
+          accelerator: "CmdOrCtrl+P",
+          click: () => sendMenuActionToRenderer("print-braille-document"),
+        },
+        {
+          label: "Exporter le document braille en BRF…",
+          click: () => sendMenuActionToRenderer("export-braille-document"),
+        },
         { type: "separator" },
         ...(isMac ? [{ role: "close" }] : [{ role: "quit" }]),
       ],
@@ -270,6 +280,22 @@ function registerIpcHandlers() {
   ipcMain.handle("gbs:open-document", async (event, payload) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
     return gbsDocumentService.openDocument(payload, browserWindow ?? undefined);
+  });
+  ipcMain.handle("gbs:print-braille-document", async (event, payload) => {
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!parentWindow || parentWindow.isDestroyed()) {
+      throw new Error("La fenêtre du document braille n'est plus disponible.");
+    }
+
+    return braillePrintService.printBrailleDocument(payload);
+  });
+  ipcMain.handle("gbs:export-braille-document", async (event, payload) => {
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!parentWindow || parentWindow.isDestroyed()) {
+      throw new Error("La fenêtre du document braille n'est plus disponible.");
+    }
+
+    return braillePrintService.exportBrailleDocument(payload, parentWindow);
   });
   ipcMain.handle("app:set-realtime-translation-menu-state", (_event, payload) => {
     if (typeof payload !== "boolean") {
