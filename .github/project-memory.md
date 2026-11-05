@@ -183,17 +183,32 @@
 - Mise en forme BFU (document normal `.gnp`) alignée sur les classes d’emphase
   liblouis (`bold`, `italic`, `underline`) avec vérification dynamique du
   support de la table active et messages d’état associés.
+- Pour les tables françaises BFU, les passages de quatre mots ou plus en
+  majuscules reçoivent les indicateurs CBFU de début et de fin, en aperçu et en
+  production; les emphases de quatre mots ou plus sont aussi normalisées au
+  format CBFU; `<anc>` utilise les filets horizontaux CBFU sans bordures
+  latérales.
+- Les boutons **Titre niveau 1/2** posent les balises explicites `<h1>`/`<h2>`;
+  en production, le contenu XML utilise les sémantiques
+  `native/liblouisutdml/semantic/semantics.sem` et son fichier INI. Les lignes
+  non marquées deviennent des paragraphes; le preview conserve seulement leur
+  texte. Les styles BFU et `<anc>` gardent leur fallback JavaScript existant.
+- La table doit être choisie explicitement à chaque création; les tables
+  françaises intégrale et BFU abrégée restent disponibles.
+- Fichiers touchés pour l’alignement CBFU : `src/main/braille-service.js`,
+  `src/main/braille-native-service.js`, `src/renderer/app.js`,
+  `src/renderer/index.html`, `native/liblouisutdml/semantic/`,
+  `tests/bfu-transcription.test.js`, `README.md` et `.github/project-memory.md`.
 - Balise de colonne braille persistante (`<cb#>`): insertion d'un décalage de
   début de ligne (espaces braille) appliqué sur la ligne courante puis sur les
   lignes suivantes tant que le bloc n'est pas fermé via `<cb>` ou `</cb>`.
 - Balise de paragraphe ponctuelle (`<par>`): insertion d'un retrait de
   2 cellules braille sur la ligne courante uniquement (équivalent imprimé:
   5 caractères), sans persistance sur la ligne suivante.
-- Balise d'encadre ponctuelle (`<anc>` / `<anc#>`): encadre la ligne courante
-  avec une ligne de debut (bord haut), la ligne encadree (`points 1-2-3-4-5-6`
-  au debut et a la fin), puis une ligne de fermeture type fin de tableau ;
-  avec `<anc#>`, le caractere de fin est force au minimum a la colonne `# + 1`
-  et les lignes de debut/fin s'ajustent a la meme largeur.
+- Balise d'encadré ponctuelle (`<anc>` / `<anc#>`): filets horizontaux CBFU
+  ouvrant (`points 2-3-5-6`) et fermant (`points 1-2-4-5`), sans bordures
+  latérales, avec une ligne vide avant/après si du texte voisin existe;
+  `<anc#>` fixe une largeur minimale commune au contenu et aux filets.
 - Persistance compressee des documents natifs: les fichiers `.gnp` et `.gnb`
   sont stockes compresses (niveau maximal) et decompressees en memoire a
   l'ouverture, avec compatibilite des anciens fichiers non compresses.
@@ -752,5 +767,7 @@
 
 ## Prochaine étape naturelle
 
-- Ajouter des tests automatiques dédiés à la mise en forme BFU (balises,
-  emphases multi-mots, tables non supportées) pour sécuriser les régressions.
+- Ajouter des outils de balisage sémantique pour les niveaux de titres et les
+  adaptations de tableaux; le niveau structurel ne se déduit pas de façon
+  fiable du texte brut. Évaluer une correction contrôlée des accents manquants
+  dans les majuscules.

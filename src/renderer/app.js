@@ -94,6 +94,8 @@ const editorPanel = document.querySelector("#editor-panel");
 const editorPages = document.querySelector("#editor-pages");
 const addPageButton = document.querySelector("#add-page-button");
 const centerActiveLineButton = document.querySelector("#center-active-line-button");
+const applyHeading1Button = document.querySelector("#apply-heading1-button");
+const applyHeading2Button = document.querySelector("#apply-heading2-button");
 const applyBoldStyleButton = document.querySelector("#apply-bold-style-button");
 const applyItalicStyleButton = document.querySelector("#apply-italic-style-button");
 const applyUnderlineStyleButton = document.querySelector("#apply-underline-style-button");
@@ -196,6 +198,10 @@ const BFU_STYLE_TAG_BY_NAME = Object.freeze({
   bold: { openTag: "<b>", closeTag: "</b>", label: "gras" },
   italic: { openTag: "<i>", closeTag: "</i>", label: "italique" },
   underline: { openTag: "<u>", closeTag: "</u>", label: "surlignage" },
+});
+const SEMANTIC_BLOCK_TAG_BY_NAME = Object.freeze({
+  h1: { label: "titre de niveau 1" },
+  h2: { label: "titre de niveau 2" },
 });
 const BFU_STYLE_CLASS_BY_MARKUP_TAG = Object.freeze({
   b: "bold",
@@ -1340,7 +1346,13 @@ async function initializeTables() {
 
   state.tables = tables;
   tableSelect.replaceChildren();
+  const tablePlaceholder = document.createElement("option");
+  tablePlaceholder.value = "";
+  tablePlaceholder.textContent = "Sélectionner une table…";
+  tablePlaceholder.disabled = true;
+  tableSelect.append(tablePlaceholder);
   tables.forEach((table) => appendTableOption(table));
+  tableSelect.value = "";
 }
 
 function findTableByPath(tablePath) {
@@ -5018,6 +5030,68 @@ function onApplyUnderlineStyle() {
   applyBfuStyleByName("underline");
 }
 
+function applySemanticBlockByName(tagName) {
+  const semanticBlock = SEMANTIC_BLOCK_TAG_BY_NAME[tagName];
+  if (!semanticBlock) {
+    return;
+  }
+
+  if (!canApplyBfuStyleActions()) {
+    setStatus(
+      documentStatusMessage,
+      "Le balisage sémantique est disponible uniquement en document normal (.gnp).",
+      "neutral",
+    );
+    return;
+  }
+
+  const targetLineInput = resolveFormattingTargetLineInput();
+  if (!targetLineInput) {
+    setStatus(
+      documentStatusMessage,
+      "Place le curseur sur la ligne de titre à baliser.",
+      "neutral",
+    );
+    return;
+  }
+
+  const currentValue = targetLineInput.value;
+  const existingTag = /^<(h1|h2|p)>(.*)<\/\1>$/u.exec(currentValue);
+  const content = existingTag ? existingTag[2] : currentValue;
+  if (content.trim().length === 0) {
+    setStatus(documentStatusMessage, "La ligne doit contenir du texte.", "neutral");
+    return;
+  }
+
+  const isRemovingTag = existingTag?.[1] === tagName;
+  const nextValue = isRemovingTag ? content : `<${tagName}>${content}</${tagName}>`;
+  targetLineInput.value = nextValue;
+  targetLineInput.dispatchEvent(new Event("input", { bubbles: true }));
+  targetLineInput.focus();
+
+  const selectionStart = isRemovingTag ? 0 : tagName.length + 2;
+  targetLineInput.setSelectionRange(
+    selectionStart,
+    selectionStart + content.length,
+  );
+
+  setStatus(
+    documentStatusMessage,
+    isRemovingTag
+      ? `Balisage ${semanticBlock.label} retiré.`
+      : `Balisage ${semanticBlock.label} appliqué pour la mise en page sémantique.`,
+    "success",
+  );
+}
+
+function onApplyHeading1() {
+  applySemanticBlockByName("h1");
+}
+
+function onApplyHeading2() {
+  applySemanticBlockByName("h2");
+}
+
 function getDirection() {
   const checkedDirection = document.querySelector('input[name="direction"]:checked');
   return checkedDirection ? checkedDirection.value : "text-to-braille";
@@ -5360,7 +5434,7 @@ function setSelectedDocumentTypeInForm(documentType) {
 function createDocumentFromForm() {
   const selectedTable = findTableByPath(tableSelect.value);
   if (!selectedTable) {
-    throw new Error("La table de traduction sélectionnée est invalide.");
+    throw new Error("Choisis une table de traduction avant de créer le document.");
   }
 
   const linesPerPage = parseBoundedIntegerFromInput(
@@ -5401,6 +5475,7 @@ function openNewDocumentCreationPanel() {
     return;
   }
 
+  tableSelect.value = "";
   setWelcomePanelOpen(false);
   setNewDocumentPanelOpen(true);
   setStatus(
@@ -6660,6 +6735,12 @@ newDocumentForm.addEventListener("submit", onCreateDocument);
 openDocumentButton.addEventListener("click", onOpenDocument);
 addPageButton.addEventListener("click", onAddPage);
 centerActiveLineButton.addEventListener("click", onCenterActiveLine);
+if (applyHeading1Button instanceof HTMLButtonElement) {
+  applyHeading1Button.addEventListener("click", onApplyHeading1);
+}
+if (applyHeading2Button instanceof HTMLButtonElement) {
+  applyHeading2Button.addEventListener("click", onApplyHeading2);
+}
 if (applyBoldStyleButton instanceof HTMLButtonElement) {
   applyBoldStyleButton.addEventListener("click", onApplyBoldStyle);
 }

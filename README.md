@@ -313,6 +313,34 @@ Le binaire non empaqueté est aussi disponible ici :
    - le contenu est redimensionné selon les paramètres braille choisis (caractères/ligne et lignes/page) ;
    - un fichier `.gnb` compagnon est généré automatiquement avec le même nom de base quand l’enregistrement est possible.
 
+### Transcription conforme au CBFU
+
+À la création d’un document, la table de traduction doit être choisie
+explicitement. Les options françaises intégrale et BFU abrégée restent
+disponibles; le choix dépend du type de braille souhaité.
+
+Avec une table française BFU, les séquences d’au moins quatre mots entièrement
+en majuscules utilisent l’indicateur de début et de fin de passage CBFU, y
+compris lorsque la séquence traverse un retour à la ligne. Les séquences plus
+courtes gardent les indicateurs de mot.
+
+Les emphases marquées dans le document suivent aussi le seuil de quatre mots :
+le passage commence par l’indicateur CBFU et se termine avant le dernier mot.
+
+Le logiciel ne rétablit pas automatiquement les accents manquants dans les
+majuscules : cette correction exige une interprétation linguistique. Vérifie et
+corrige le texte source avant la transcription. Les titres et l’organisation
+des tableaux nécessitent aussi un repérage explicite.
+
+En document normal (`.gnp`), les boutons **Titre niveau 1** et **Titre niveau 2**
+marquent les lignes avec `<h1>...</h1>` et `<h2>...</h2>`. En production, ces
+marqueurs sont convertis en XHTML et interprétés par les fichiers sémantiques
+`native/liblouisutdml/semantic/semantics.sem` et
+`native/liblouisutdml/semantic/liblouisutdml.ini`. Les lignes non marquées sont
+traitées comme des paragraphes. Le preview traduit le texte sans appliquer la
+mise en page sémantique; si une ligne contient aussi un style BFU ou un encadré,
+le moteur JavaScript est conservé et les règles `.sem` ne sont pas appliquées.
+
 ### Mise en forme BFU (italique, gras, surlignage)
 
 En document normal (`.gnp`), tu peux marquer l’emphase BFU avant la traduction braille :
@@ -389,17 +417,14 @@ Notes:
 
 ### Encadré braille de ligne (`<anc>`)
 
-Tu peux utiliser la balise `&lt;anc&gt;` pour encadrer la ligne courante avec le
-caractère braille `points 1-2-3-4-5-6` :
+Tu peux utiliser la balise `&lt;anc&gt;` pour encadrer la ligne courante avec les
+filets horizontaux du CBFU :
 
-- `&lt;anc&gt;` ajoute une ligne de début (type bord haut), puis la ligne encadrée
-   (`points 1-2-3-4-5-6` au début et à la fin), puis une ligne de fin de type
-   fin de tableau ;
-- `&lt;anc12&gt;` applique le même encadré, avec un caractère de fin positionné au
-   minimum au 13e caractère (si nécessaire, des espaces sont ajoutés avant la
-   fin), et les lignes de début/fin reprennent cette même largeur ;
-- si la ligne contient déjà plus de texte que la position demandée, le
-   caractère de fin reste placé après le dernier caractère de la ligne.
+- `&lt;anc&gt;` ajoute un filet ouvrant `points 2-3-5-6`, le contenu sans bordures
+   latérales, puis un filet fermant `points 1-2-4-5`; l’encadré est isolé du
+   texte voisin par une ligne vide ;
+- `&lt;anc12&gt;` impose une largeur minimale de 13 cellules; le contenu est
+   complété au besoin et les deux filets reprennent cette largeur.
 
 Notes:
 

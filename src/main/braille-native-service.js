@@ -5,6 +5,15 @@ const { spawnSync } = require("node:child_process");
 
 const FILE2BRL_EXECUTABLE_NAME = process.platform === "win32" ? "file2brl.exe" : "file2brl";
 const PLATFORM_LIBRARY_PATH_ENV = process.platform === "darwin" ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
+const SEMANTIC_CONFIG_FOLDER = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "native",
+  "liblouisutdml",
+  "semantic",
+);
+const SEMANTIC_CONFIG_FILES = Object.freeze(["liblouisutdml.ini", "semantics.sem"]);
 const PAGE_NUMBER_POSITION_VALUES = new Set(["top", "bottom"]);
 const DEFAULT_NATIVE_PAGE_LAYOUT = Object.freeze({
   printPages: true,
@@ -316,13 +325,17 @@ function toYesNoBoolean(value) {
 function buildCommonFile2BrlArguments(options) {
   const cellsPerLine = toBoundedInteger(options.charactersPerLine, 40, 1, 120);
   const linesPerPage = toBoundedInteger(options.linesPerPage, 25, 1, 60);
+  const semanticArguments = options.semanticMarkup
+    ? ["-CsemanticFiles=semantics.sem"]
+    : [];
 
   return [
-    "-T",
+    ...(options.semanticMarkup ? [] : ["-T"]),
     `-CliteraryTextTable=${options.tableFile}`,
     `-CuncontractedTable=${options.tableFile}`,
     `-CmathtextTable=${options.tableFile}`,
     `-CcompbrlTable=${options.tableFile}`,
+    ...semanticArguments,
     "-CoutputEncoding=UTF8",
     "-CinputTextEncoding=UTF8",
     "-ClineEnd=\\n",
@@ -389,11 +402,22 @@ function translateTextToBrailleWithNativeEngine(options) {
   }
 
   const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "gbs-utdml-"));
-  const inputPath = path.join(tempDirectory, "input.txt");
+  const semanticMarkup = options.semanticMarkup === true;
+  const inputPath = path.join(tempDirectory, semanticMarkup ? "input.xml" : "input.txt");
   const outputPath = path.join(tempDirectory, "output.brf");
 
   try {
     fs.writeFileSync(inputPath, options.inputText, "utf8");
+    if (semanticMarkup) {
+      SEMANTIC_CONFIG_FILES.forEach((fileName) => {
+        const sourcePath = path.join(SEMANTIC_CONFIG_FOLDER, fileName);
+        if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+          throw new Error(`Le fichier de configuration sémantique est introuvable: ${sourcePath}`);
+        }
+
+        fs.copyFileSync(sourcePath, path.join(tempDirectory, fileName));
+      });
+    }
 
     const executionEnv = { ...process.env };
     if (runtime.tablesPath && !executionEnv.LOUIS_TABLEPATH) {
@@ -415,6 +439,7 @@ function translateTextToBrailleWithNativeEngine(options) {
       charactersPerLine: options.charactersPerLine,
       linesPerPage: options.linesPerPage,
       pageLayout: options.pageLayout,
+      semanticMarkup,
       inputPath,
       outputPath,
       workingDirectory: tempDirectory,
@@ -425,6 +450,7 @@ function translateTextToBrailleWithNativeEngine(options) {
     for (let argumentIndex = 0; argumentIndex < commandArgumentSets.length; argumentIndex += 1) {
       const commandArguments = commandArgumentSets[argumentIndex];
       const commandResult = spawnSync(runtime.executablePath, commandArguments, {
+        cwd: semanticMarkup ? tempDirectory : undefined,
         encoding: "utf8",
         windowsHide: true,
         env: executionEnv,

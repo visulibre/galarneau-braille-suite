@@ -75,9 +75,12 @@
               id="table-select"
               name="table"
               required
-              aria-describedby="new-document-help"
+              aria-describedby="new-document-help new-document-table-help"
             ></select>
           </div>
+          <p id="new-document-table-help" class="hint">
+            Choisis la table à chaque création. Les tables françaises intégrale et BFU abrégée restent disponibles.
+          </p>
 
           <div class="field-grid">
             <div class="field">
@@ -388,6 +391,28 @@
             </div>
             <p id="center-active-line-help" class="hint">
               Place le curseur sur une ligne, puis active ce bouton pour centrer un titre.
+            </p>
+            <div class="action-row" aria-label="Structure sémantique du document">
+              <button
+                type="button"
+                id="apply-heading1-button"
+                class="button-secondary"
+                aria-controls="editor-pages"
+              >
+                Titre niveau 1
+              </button>
+              <button
+                type="button"
+                id="apply-heading2-button"
+                class="button-secondary"
+                aria-controls="editor-pages"
+              >
+                Titre niveau 2
+              </button>
+            </div>
+            <p class="hint">
+              Marque explicitement les titres pour leur mise en page sémantique en production;
+              les lignes ordinaires sont traitées comme des paragraphes.
             </p>
             <div class="action-row" aria-label="Mise en forme BFU de la ligne active">
               <button

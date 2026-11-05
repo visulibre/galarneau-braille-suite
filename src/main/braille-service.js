@@ -91,6 +91,12 @@ const BRAILLE_ANCHOR_TAG_MAX_OFFSET = 240;
 const BRAILLE_TABLE_DELIMITER_CHARACTER = String.fromCodePoint(0x283f); // dots 1-2-3-4-5-6
 const BRAILLE_TABLE_HEADER_FILL_CHARACTER = String.fromCodePoint(0x281b); // dots 1-2-4-5
 const BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER = String.fromCodePoint(0x2836); // dots 2-3-5-6
+const BRAILLE_FRAME_OPEN_CHARACTER = String.fromCodePoint(0x2836); // dots 2-3-5-6
+const BRAILLE_FRAME_CLOSE_CHARACTER = String.fromCodePoint(0x281b); // dots 1-2-4-5
+const BRAILLE_CAPITAL_INDICATOR = String.fromCodePoint(0x2828); // dots 4-6
+const BRAILLE_CAPITAL_PASSAGE_START = String.fromCodePoint(0x2812); // dots 2-5
+const BRAILLE_EMPHASIS_INDICATOR = String.fromCodePoint(0x2838); // dots 4-5-6
+const BRAILLE_EMPHASIS_PASSAGE_START = String.fromCodePoint(0x2812); // dots 2-5
 
 let isTableLoadingReady = false;
 let tableLoadingFailure = null;
@@ -613,15 +619,14 @@ function getOrCreateLineFrameConfig(lineFrameConfigs, lineIndex) {
 }
 
 function applyAnchorFrameToBrailleLine(lineValue, minEndColumn = null) {
-  const normalizedLine = typeof lineValue === "string" ? lineValue : "";
-  let framedLine = `${BRAILLE_TABLE_DELIMITER_CHARACTER}${normalizedLine}`;
+  let framedLine = typeof lineValue === "string" ? lineValue : "";
 
-  const naturalEndColumn = framedLine.length + 1;
+  const naturalEndColumn = framedLine.length;
   if (Number.isInteger(minEndColumn) && minEndColumn > naturalEndColumn) {
     framedLine += " ".repeat(minEndColumn - naturalEndColumn);
   }
 
-  return `${framedLine}${BRAILLE_TABLE_DELIMITER_CHARACTER}`;
+  return framedLine;
 }
 
 function buildBrailleTableBorderLineFromFramedLine(framedLine, fillCharacter) {
@@ -632,33 +637,15 @@ function buildBrailleTableBorderLineFromFramedLine(framedLine, fillCharacter) {
       ? fillCharacter
       : BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER;
 
-  if (lineLength <= 1) {
-    return BRAILLE_TABLE_DELIMITER_CHARACTER;
-  }
-
-  if (lineLength === 2) {
-    return `${BRAILLE_TABLE_DELIMITER_CHARACTER}${BRAILLE_TABLE_DELIMITER_CHARACTER}`;
-  }
-
-  return (
-    BRAILLE_TABLE_DELIMITER_CHARACTER +
-    safeFillCharacter.repeat(lineLength - 2) +
-    BRAILLE_TABLE_DELIMITER_CHARACTER
-  );
+  return safeFillCharacter.repeat(Math.max(1, lineLength));
 }
 
 function buildBrailleTableStartLineFromFramedLine(framedLine) {
-  return buildBrailleTableBorderLineFromFramedLine(
-    framedLine,
-    BRAILLE_TABLE_HEADER_FILL_CHARACTER,
-  );
+  return buildBrailleTableBorderLineFromFramedLine(framedLine, BRAILLE_FRAME_OPEN_CHARACTER);
 }
 
 function buildBrailleTableEndLineFromFramedLine(framedLine) {
-  return buildBrailleTableBorderLineFromFramedLine(
-    framedLine,
-    BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER,
-  );
+  return buildBrailleTableBorderLineFromFramedLine(framedLine, BRAILLE_FRAME_CLOSE_CHARACTER);
 }
 
 function applyAnchorFramesToBrailleText(outputText, lineFrameConfigs) {
@@ -692,6 +679,17 @@ function applyAnchorFramesToBrailleText(outputText, lineFrameConfigs) {
       replacementLines.push(buildBrailleTableEndLineFromFramedLine(framedLine));
     }
 
+    if (targetLineIndex > 0 && lines[targetLineIndex - 1] !== "") {
+      replacementLines.unshift("");
+    }
+
+    if (
+      targetLineIndex + 1 < lines.length &&
+      lines[targetLineIndex + 1] !== ""
+    ) {
+      replacementLines.push("");
+    }
+
     lines.splice(targetLineIndex, 1, ...replacementLines);
     insertedLineOffset += replacementLines.length - 1;
   });
@@ -699,11 +697,54 @@ function applyAnchorFramesToBrailleText(outputText, lineFrameConfigs) {
   return lines.join("\n");
 }
 
-function parseTextWithBfuStyleMarkers(inputText) {
+function parseSemanticBlockMarkers(inputText) {
   const normalizedInputText =
     typeof inputText === "string"
       ? inputText.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n")
       : "";
+  const semanticTagByLine = [];
+  let hasSemanticMarkers = false;
+  const plainText = normalizedInputText
+    .split("\n")
+    .map((line, lineIndex) => {
+      const match = /^<(h1|h2|p)>(.*)<\/\1>$/u.exec(line);
+      if (!match) {
+        return line;
+      }
+
+      semanticTagByLine[lineIndex] = match[1];
+      hasSemanticMarkers = true;
+      return match[2];
+    })
+    .join("\n");
+
+  return {
+    plainText,
+    semanticTagByLine,
+    hasSemanticMarkers,
+  };
+}
+
+function escapeXmlText(text) {
+  return text.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
+}
+
+function buildSemanticXhtml(parsedInput) {
+  const semanticTags = parsedInput.semanticTagByLine;
+  const content = parsedInput.plainText
+    .split("\n")
+    .map((line, lineIndex) => {
+      const tagName = semanticTags[lineIndex] ?? "p";
+      return `<${tagName}>${escapeXmlText(line)}</${tagName}>`;
+    })
+    .join("\n");
+
+  return `<?xml version="1.0" encoding="UTF-8"?><html><body>${content}</body></html>`;
+}
+
+function parseTextWithBfuStyleMarkers(inputText) {
+  const semanticMarkup = parseSemanticBlockMarkers(inputText);
+  const normalizedInputText = semanticMarkup.plainText;
   const plainTextCharacters = [];
   const internalStyleFlagsByChar = [];
   const activeStyleDepth = {
@@ -816,8 +857,42 @@ function parseTextWithBfuStyleMarkers(inputText) {
     hasBfuStyleMarkers,
     hasColumnIndentMarkers,
     hasAnchorFrameMarkers,
+    hasSemanticMarkers: semanticMarkup.hasSemanticMarkers,
+    semanticTagByLine: semanticMarkup.semanticTagByLine,
     lineFrameConfigs,
   };
+}
+
+function translateBfuTextLines(table, parsedInput) {
+  const lines = parsedInput.plainText.split("\n");
+  const typeformMasks = parsedInput.hasBfuStyleMarkers
+    ? getBfuTypeformMasksForTable(table)
+    : null;
+  let sourceOffset = 0;
+
+  const outputLines = lines.map((line) => {
+    const lineStyleFlags = parsedInput.internalStyleFlagsByChar.slice(
+      sourceOffset,
+      sourceOffset + line.length,
+    );
+    sourceOffset += line.length + 1;
+
+    if (!typeformMasks || !lineStyleFlags.some((flags) => flags > 0)) {
+      return translateTextToBrailleNative(table, line);
+    }
+
+    const typeformValues = buildTypeformValues(lineStyleFlags, typeformMasks);
+    if (!typeformValues.some((maskValue) => maskValue > 0)) {
+      return translateTextToBrailleNative(table, line);
+    }
+
+    return (
+      translateStringWithOptionalTypeforms(table, line, typeformValues) ??
+      translateTextToBrailleNative(table, line)
+    );
+  });
+
+  return outputLines.join("\n");
 }
 
 function readTypeformMaskForClass(table, styleClass) {
@@ -996,14 +1071,20 @@ function translateTextToBrailleWithBfuStyles(table, inputText) {
   if (
     !parsedInput.hasBfuStyleMarkers &&
     !parsedInput.hasColumnIndentMarkers &&
-    !parsedInput.hasAnchorFrameMarkers
+    !parsedInput.hasAnchorFrameMarkers &&
+    !parsedInput.hasSemanticMarkers
   ) {
     return translateTextToBrailleNative(table, inputText);
   }
 
+  if (parsedInput.hasAnchorFrameMarkers) {
+    const outputText = translateBfuTextLines(table, parsedInput);
+    return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
+  }
+
   if (!parsedInput.hasBfuStyleMarkers) {
     const outputText = translateTextToBrailleNative(table, parsedInput.plainText);
-    return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
+    return outputText;
   }
 
   if (parsedInput.plainText.length === 0) {
@@ -1061,6 +1142,116 @@ function translateWithLiblouisJavascript(table, payload) {
   return liblouis.backTranslateString(table, payload.inputText);
 }
 
+function replaceCapitalIndicators(word, capitalIndicator, replacement) {
+  const parts = word.split(capitalIndicator);
+  if (parts.length === 1) {
+    return word;
+  }
+
+  return `${parts[0]}${replacement}${parts.slice(1).join("")}`;
+}
+
+function applyBfuEmphasisPassageIndicators(outputText) {
+  const chunks = outputText.split(/(\s+)/u);
+  const phraseOpeningIndicator =
+    `${BRAILLE_EMPHASIS_PASSAGE_START}${BRAILLE_EMPHASIS_INDICATOR}`;
+  const repeatedEmphasisIndicator =
+    `${BRAILLE_EMPHASIS_INDICATOR}${BRAILLE_EMPHASIS_INDICATOR}`;
+
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+    if (!chunks[chunkIndex].includes(repeatedEmphasisIndicator)) {
+      continue;
+    }
+
+    chunks[chunkIndex] = chunks[chunkIndex].replaceAll(
+      repeatedEmphasisIndicator,
+      phraseOpeningIndicator,
+    );
+
+    for (let endChunkIndex = chunkIndex + 1; endChunkIndex < chunks.length; endChunkIndex += 1) {
+      const endChunk = chunks[endChunkIndex];
+      if (endChunk.length === 0 || /^\s+$/u.test(endChunk)) {
+        continue;
+      }
+
+      if (!endChunk.includes(BRAILLE_EMPHASIS_INDICATOR)) {
+        continue;
+      }
+
+      if (endChunk.includes(repeatedEmphasisIndicator)) {
+        break;
+      }
+
+      if (
+        endChunk.endsWith(BRAILLE_EMPHASIS_INDICATOR) &&
+        !endChunk.startsWith(BRAILLE_EMPHASIS_INDICATOR)
+      ) {
+        chunks[endChunkIndex] = `${BRAILLE_EMPHASIS_INDICATOR}${endChunk.slice(0, -1)}`;
+      }
+
+      break;
+    }
+  }
+
+  return chunks.join("");
+}
+
+function applyBfuCapitalPassageIndicators(outputText, isNativeOutput) {
+  const capitalIndicator = isNativeOutput ? "¨" : BRAILLE_CAPITAL_INDICATOR;
+  const capitalPassageStart = isNativeOutput
+    ? `:${capitalIndicator}`
+    : `${BRAILLE_CAPITAL_PASSAGE_START}${capitalIndicator}`;
+  const chunks = outputText.split(/(\s+)/u);
+  const wordChunkIndexes = [];
+
+  chunks.forEach((chunk, index) => {
+    if (chunk.length > 0 && !/^\s+$/u.test(chunk)) {
+      wordChunkIndexes.push(index);
+    }
+  });
+
+  let wordIndex = 0;
+  while (wordIndex < wordChunkIndexes.length) {
+    const firstWord = chunks[wordChunkIndexes[wordIndex]];
+    if (!firstWord.includes(`${capitalIndicator}${capitalIndicator}`)) {
+      wordIndex += 1;
+      continue;
+    }
+
+    let runEnd = wordIndex + 1;
+    while (runEnd < wordChunkIndexes.length) {
+      const nextWord = chunks[wordChunkIndexes[runEnd]];
+      if (!nextWord.includes(`${capitalIndicator}${capitalIndicator}`)) {
+        break;
+      }
+
+      runEnd += 1;
+    }
+
+    if (runEnd - wordIndex >= 4) {
+      const lastWordIndex = runEnd - 1;
+      for (let index = wordIndex; index < runEnd; index += 1) {
+        const chunkIndex = wordChunkIndexes[index];
+        const replacement =
+          index === wordIndex
+            ? capitalPassageStart
+            : index === lastWordIndex
+              ? capitalIndicator
+              : "";
+        chunks[chunkIndex] = replaceCapitalIndicators(
+          chunks[chunkIndex],
+          capitalIndicator,
+          replacement,
+        );
+      }
+    }
+
+    wordIndex = runEnd;
+  }
+
+  return chunks.join("");
+}
+
 function normalizeTranslationResult({ outputText, engine, executionMode, warning = null }) {
   return {
     outputText,
@@ -1108,6 +1299,11 @@ function translateForProduction(table, payload) {
         "La traduction contient des balises <anc> et reste traitee par liblouis-js " +
         "pour appliquer l'encadre ligne par ligne.";
     }
+    if (parsedInput.hasSemanticMarkers) {
+      warning +=
+        " Le balisage <h1>/<h2>/<p> est traduit sans mise en page sémantique " +
+        "parce que les styles BFU ou les encadrés utilisent le moteur JavaScript.";
+    }
 
     return normalizeTranslationResult({
       outputText,
@@ -1115,6 +1311,39 @@ function translateForProduction(table, payload) {
       executionMode: "production",
       warning,
     });
+  }
+
+  if (parsedInput.hasSemanticMarkers) {
+    try {
+      const nativeFormatting = resolveNativeFormatting(payload);
+      const outputText = nativeBrailleService.translateTextToBrailleWithNativeEngine({
+        inputText: buildSemanticXhtml(parsedInput),
+        semanticMarkup: true,
+        tableFile: resolveNativeTableFile(table),
+        linesPerPage: nativeFormatting.linesPerPage,
+        charactersPerLine: nativeFormatting.charactersPerLine,
+        pageLayout: nativeFormatting.pageLayout,
+      });
+
+      return normalizeTranslationResult({
+        outputText,
+        engine: "native-liblouisutdml",
+        executionMode: "production",
+      });
+    } catch (error) {
+      const outputText = translateWithLiblouisJavascript(table, payload);
+      const reason = error instanceof Error ? error.message : String(error);
+
+      return normalizeTranslationResult({
+        outputText,
+        engine: "liblouis-js-production-fallback",
+        executionMode: "production",
+        warning:
+          "Le moteur natif liblouisutdml n'a pas pu appliquer les sémantiques .sem. " +
+          "Bascule automatique vers liblouis-js. " +
+          `Detail: ${reason}`,
+      });
+    }
   }
 
   try {
@@ -1162,7 +1391,20 @@ function translate(payload) {
     throw new Error("La traduction a échoué sans message exploitable.");
   }
 
-  return result;
+  const outputText =
+    payload.direction === "text-to-braille" && isFrenchBfuTable(table)
+      ? applyBfuCapitalPassageIndicators(
+          result.engine === "native-liblouisutdml"
+            ? result.outputText
+            : applyBfuEmphasisPassageIndicators(result.outputText),
+          result.engine === "native-liblouisutdml",
+        )
+      : result.outputText;
+
+  return {
+    ...result,
+    outputText,
+  };
 }
 
 function getRuntimeInfo() {

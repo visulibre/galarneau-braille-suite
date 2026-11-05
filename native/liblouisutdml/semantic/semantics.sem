@@ -1,0 +1,4 @@
+root &xpath(/*)
+heading1 &xpath(//h1)
+heading2 &xpath(//h2)
+para &xpath(//p)
