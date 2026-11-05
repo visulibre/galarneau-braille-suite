@@ -92,6 +92,7 @@ const documentStatusMessage = document.querySelector("#document-status-message")
 
 const editorPanel = document.querySelector("#editor-panel");
 const editorPages = document.querySelector("#editor-pages");
+const brailleTableDeleteDialog = document.querySelector("#braille-table-delete-dialog");
 const addPageButton = document.querySelector("#add-page-button");
 const centerActiveLineButton = document.querySelector("#center-active-line-button");
 const applyHeading1Button = document.querySelector("#apply-heading1-button");
@@ -148,6 +149,7 @@ let isCreateLoading = false;
 let isCreateLocked = false;
 let isTranslationBusy = false;
 let isFileBusy = false;
+let pendingBrailleTableDeleteLine = null;
 let liveBraillePreviewTimerId = null;
 let liveBraillePreviewRequestId = 0;
 let lastFocusedLinePosition = null;
@@ -238,9 +240,15 @@ const BRAILLE_TABLE_PROTECTED_CHARACTERS = new Set([
   BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER,
 ]);
 const TABLE_INSERTION_MIN_COLUMNS = 1;
-const TABLE_INSERTION_MAX_COLUMNS = 32;
 const TABLE_INSERTION_MIN_ROWS = 1;
-const TABLE_INSERTION_MAX_ROWS = 200;
+const brailleTableTag = window.GbsBrailleTableTag;
+if (!brailleTableTag || typeof brailleTableTag.parse !== "function") {
+  throw new Error("Le parseur de balise tableau n'a pas été chargé.");
+}
+const brailleTableLayout = window.GbsBrailleTableLayout;
+if (!brailleTableLayout || typeof brailleTableLayout.getColumnWidths !== "function") {
+  throw new Error("Le module de mise en page des tableaux n'a pas été chargé.");
+}
 
 function configureLiveRegion(element, variant) {
   if (!element) {
@@ -1062,7 +1070,7 @@ function updateTranslationInlineHelp() {
   if (isBrailleOnlyEditorMode()) {
     translationInlineHelp.textContent =
       state.inputMode === INPUT_MODE_TEXT
-        ? "Mode braille actif: tape au clavier standard, la ligne est convertie en braille à mesure de la saisie."
+        ? "Mode braille actif: tape au clavier standard. Sur une ligne vide, saisis <tableau c=3 r=4 e> pour créer un tableau (sans « e », sans entête)."
         : "Mode braille actif: saisie braille 8 points directe dans la ligne.";
     return;
   }
@@ -2889,126 +2897,6 @@ function buildBrailleTableBorderLineFromColumnWidths(columnWidths, fillCharacter
   );
 }
 
-function parseIntegerWithinRange(rawValue, minimumValue, maximumValue) {
-  if (typeof rawValue !== "string") {
-    return null;
-  }
-
-  const normalizedValue = rawValue.trim();
-  if (!/^\d+$/u.test(normalizedValue)) {
-    return null;
-  }
-
-  const parsedValue = Number.parseInt(normalizedValue, 10);
-  if (!Number.isInteger(parsedValue)) {
-    return null;
-  }
-
-  if (parsedValue < minimumValue || parsedValue > maximumValue) {
-    return null;
-  }
-
-  return parsedValue;
-}
-
-function promptTableDimension(label, defaultValue, minimumValue, maximumValue) {
-  while (true) {
-    const rawValue = window.prompt(
-      `${label} (${minimumValue}-${maximumValue})`,
-      String(defaultValue),
-    );
-    if (rawValue === null) {
-      return null;
-    }
-
-    const parsedValue = parseIntegerWithinRange(rawValue, minimumValue, maximumValue);
-    if (parsedValue !== null) {
-      return parsedValue;
-    }
-
-    setStatus(
-      documentStatusMessage,
-      `Valeur invalide. Entre un entier entre ${minimumValue} et ${maximumValue}.`,
-      "error",
-    );
-  }
-}
-
-function parseYesNoAnswer(rawValue) {
-  if (typeof rawValue !== "string") {
-    return null;
-  }
-
-  const normalizedValue = rawValue.trim().toLowerCase();
-  if (["o", "oui", "y", "yes", "1"].includes(normalizedValue)) {
-    return true;
-  }
-
-  if (["n", "non", "no", "0"].includes(normalizedValue)) {
-    return false;
-  }
-
-  return null;
-}
-
-function promptTableHeaderOption(defaultValue = true) {
-  const defaultLabel = defaultValue ? "oui" : "non";
-
-  while (true) {
-    const rawValue = window.prompt(
-      "Ajouter une rangée d'entête ? (oui/non)",
-      defaultLabel,
-    );
-    if (rawValue === null) {
-      return null;
-    }
-
-    const parsedValue = parseYesNoAnswer(rawValue);
-    if (parsedValue !== null) {
-      return parsedValue;
-    }
-
-    setStatus(
-      documentStatusMessage,
-      "Réponse invalide. Écris oui ou non.",
-      "error",
-    );
-  }
-}
-
-function requestBrailleTableInsertionConfig() {
-  const columnCount = promptTableDimension(
-    "Nombre de colonnes",
-    3,
-    TABLE_INSERTION_MIN_COLUMNS,
-    TABLE_INSERTION_MAX_COLUMNS,
-  );
-  if (columnCount === null) {
-    return null;
-  }
-
-  const rowCount = promptTableDimension(
-    "Nombre de rangées (sans compter l'entête)",
-    3,
-    TABLE_INSERTION_MIN_ROWS,
-    TABLE_INSERTION_MAX_ROWS,
-  );
-  if (rowCount === null) {
-    return null;
-  }
-
-  const includeHeaderRow = promptTableHeaderOption(true);
-  if (includeHeaderRow === null) {
-    return null;
-  }
-
-  return {
-    columnCount,
-    rowCount,
-    includeHeaderRow,
-  };
-}
-
 function buildBrailleTableTemplateLines(columnCount, rowCount, includeHeaderRow) {
   const safeColumnCount = Math.max(TABLE_INSERTION_MIN_COLUMNS, columnCount);
   const safeRowCount = Math.max(TABLE_INSERTION_MIN_ROWS, rowCount);
@@ -3040,70 +2928,30 @@ function buildBrailleTableTemplateLines(columnCount, rowCount, includeHeaderRow)
   ];
 }
 
-function insertBrailleTableAtActiveLine(config) {
-  if (!state.documentConfig || isFileBusy || isTranslationBusy) {
+function expandBrailleTableTagAtLine(linePosition, config) {
+  if (!state.documentConfig || state.documentType !== DOCUMENT_TYPE_BRAILLE) {
     return;
   }
 
-  if (shouldTranslateLineToBrailleInPlace()) {
-    setStatus(
-      documentStatusMessage,
-      "Désactive la conversion texte->braille en temps réel avant d'insérer un tableau.",
-      "neutral",
-    );
-    return;
-  }
-
-  const activeLineInput = resolveFormattingTargetLineInput();
-  if (!activeLineInput) {
-    setStatus(
-      documentStatusMessage,
-      "Sélectionne une ligne avant d'insérer un tableau.",
-      "neutral",
-    );
-    return;
-  }
-
-  const linePosition = getLinePositionFromInput(activeLineInput);
-  if (!linePosition) {
-    return;
-  }
-
-  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
-  const currentLines = flattenDocumentLines();
-  const currentLineValue = currentLines[currentFlatIndex] ?? "";
-  const selectionStart = activeLineInput.selectionStart ?? currentLineValue.length;
-  const selectionEnd = activeLineInput.selectionEnd ?? selectionStart;
-  const lineBeforeTable = currentLineValue.slice(0, selectionStart);
-  const lineAfterTable = currentLineValue.slice(selectionEnd);
-
-  const tableLines = buildBrailleTableTemplateLines(
-    config.columnCount,
-    config.rowCount,
-    config.includeHeaderRow,
+  const tableStartFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  const flatLines = flattenDocumentLines();
+  flatLines.splice(
+    tableStartFlatIndex,
+    1,
+    ...buildBrailleTableTemplateLines(
+      config.columnCount,
+      config.rowCount,
+      config.includeHeaderRow,
+    ),
   );
-  const replacementLines = [];
 
-  if (lineBeforeTable.length > 0) {
-    replacementLines.push(lineBeforeTable);
-  }
-
-  replacementLines.push(...tableLines);
-
-  if (lineAfterTable.length > 0) {
-    replacementLines.push(lineAfterTable);
-  }
-
-  currentLines.splice(currentFlatIndex, 1, ...replacementLines);
-
-  const tableStartFlatIndex = lineBeforeTable.length > 0 ? currentFlatIndex + 1 : currentFlatIndex;
   const normalizedTableResult = normalizeBrailleTableBlockInFlatLines(
-    currentLines,
+    flatLines,
     tableStartFlatIndex,
   );
-  const nextFlatLines = normalizedTableResult.changed ? normalizedTableResult.lines : currentLines;
-
-  state.pages = buildPagesFromFlatLines(nextFlatLines);
+  state.pages = buildPagesFromFlatLines(
+    normalizedTableResult.changed ? normalizedTableResult.lines : flatLines,
+  );
   markDocumentChanged();
 
   const sourceBufferSnapshot = buildSourceBufferFromDisplayLines();
@@ -3122,37 +2970,11 @@ function insertBrailleTableAtActiveLine(config) {
     }
   }
 
-  if (!isBrailleOnlyEditorMode()) {
-    if (state.realtimeTranslationEnabled) {
-      scheduleLiveBraillePreviewRefresh({ immediate: true });
-    } else if (hasInlineTranslationOutput()) {
-      setStatus(
-        translationStatusMessage,
-        "Le document a changé. Utilise Ctrl/Cmd+T pour mettre à jour la traduction dans l’éditeur.",
-        "neutral",
-      );
-    }
-  }
-
   setStatus(
     documentStatusMessage,
-    `Tableau inséré (${config.columnCount} colonne(s), ${config.rowCount} rangée(s)${config.includeHeaderRow ? ", avec entête" : ", sans entête"}).`,
+    `Tableau créé : ${config.columnCount} colonne(s), ${config.rowCount} rangée(s) de contenu${config.includeHeaderRow ? ", avec entête" : ", sans entête"}.`,
     "success",
   );
-}
-
-function onInsertTableRequest() {
-  if (!state.documentConfig || isFileBusy || isTranslationBusy) {
-    return;
-  }
-
-  const insertionConfig = requestBrailleTableInsertionConfig();
-  if (!insertionConfig) {
-    setStatus(documentStatusMessage, "Insertion de tableau annulée.", "neutral");
-    return;
-  }
-
-  insertBrailleTableAtActiveLine(insertionConfig);
 }
 
 function normalizeBrailleTableBlockInFlatLines(flatLines, aroundFlatIndex) {
@@ -3218,12 +3040,7 @@ function normalizeBrailleTableBlockInFlatLines(flatLines, aroundFlatIndex) {
     return normalizedRow;
   });
 
-  const columnWidths = new Array(columnCount).fill(1);
-  normalizedContentRows.forEach((rowCells) => {
-    for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
-      columnWidths[columnIndex] = Math.max(columnWidths[columnIndex], rowCells[columnIndex].length);
-    }
-  });
+  const columnWidths = brailleTableLayout.getColumnWidths(normalizedContentRows);
 
   const rebuiltTableLines = [];
   let contentRowIndex = 0;
@@ -3266,8 +3083,8 @@ function isAtBrailleTableDeleteTriggerPosition(lineInput) {
     return false;
   }
 
-  const { selectionStart, isEmpty } = getLineSelectionRange(lineInput);
-  if (!isEmpty || selectionStart !== 0) {
+  const { isEmpty } = getLineSelectionRange(lineInput);
+  if (!isEmpty) {
     return false;
   }
 
@@ -3285,6 +3102,44 @@ function isAtBrailleTableDeleteTriggerPosition(lineInput) {
   const tableBounds = findBrailleTableBoundsAroundFlatIndex(currentLines, currentFlatIndex);
 
   return Boolean(tableBounds && tableBounds.startFlatIndex === currentFlatIndex);
+}
+
+function openBrailleTableDeleteDialog(lineInput) {
+  if (!(brailleTableDeleteDialog instanceof HTMLDialogElement)) {
+    throw new Error("La boîte de confirmation de suppression du tableau est introuvable.");
+  }
+
+  pendingBrailleTableDeleteLine = lineInput;
+  brailleTableDeleteDialog.returnValue = "";
+  setStatus(
+    documentStatusMessage,
+    "Confirme la suppression de toutes les lignes du tableau, ou annule.",
+    "neutral",
+  );
+  brailleTableDeleteDialog.showModal();
+  const confirmButton = brailleTableDeleteDialog.querySelector(
+    "#braille-table-delete-confirm-button",
+  );
+  if (confirmButton instanceof HTMLButtonElement) {
+    confirmButton.focus();
+  }
+}
+
+function onBrailleTableDeleteDialogClose() {
+  const lineInput = pendingBrailleTableDeleteLine;
+  pendingBrailleTableDeleteLine = null;
+
+  if (brailleTableDeleteDialog.returnValue !== "confirm") {
+    setStatus(documentStatusMessage, "Suppression du tableau annulée.", "neutral");
+    return;
+  }
+
+  if (lineInput?.isConnected && deleteBrailleTableFromLineInput(lineInput)) {
+    setStatus(documentStatusMessage, "Tableau supprimé.", "success");
+    return;
+  }
+
+  setStatus(documentStatusMessage, "Impossible de supprimer ce tableau.", "error");
 }
 
 function deleteBrailleTableFromLineInput(lineInput) {
@@ -3734,7 +3589,14 @@ async function translateLineToBrailleInPlace(lineInput, pageIndex, lineIndex, in
       wrappedDisplayLines.pop();
     }
 
-    state.pages = buildPagesFromFlatLines(wrappedDisplayLines);
+    const normalizedTableResult = normalizeBrailleTableBlockInFlatLines(
+      wrappedDisplayLines,
+      startFlatIndex,
+    );
+    const nextDisplayLines = normalizedTableResult.changed
+      ? normalizedTableResult.lines
+      : wrappedDisplayLines;
+    state.pages = buildPagesFromFlatLines(nextDisplayLines);
     markDocumentChanged();
 
     writeSourceBufferLines(wrappedSourceLines);
@@ -3743,7 +3605,7 @@ async function translateLineToBrailleInPlace(lineInput, pageIndex, lineIndex, in
 
     const focusFlatIndex = Math.min(
       Math.max(startFlatIndex, wrapResult.lastAffectedIndex),
-      wrappedDisplayLines.length - 1,
+      nextDisplayLines.length - 1,
     );
     focusLineByFlatIndex(focusFlatIndex);
     refreshActiveLineSpacePreview();
@@ -3798,22 +3660,7 @@ function preventBrailleTableDelimiterEditFromKeyDown(event, lineInput) {
 
   if (canTriggerTableDeleteConfirmation) {
     event.preventDefault();
-
-    const shouldDeleteTable = window.confirm(
-      "Supprimer tout le tableau ? Cette action supprimera l'ensemble du bloc tableau.",
-    );
-
-    if (!shouldDeleteTable) {
-      setStatus(documentStatusMessage, "Suppression du tableau annulée.", "neutral");
-      return true;
-    }
-
-    if (deleteBrailleTableFromLineInput(lineInput)) {
-      setStatus(documentStatusMessage, "Tableau supprimé.", "success");
-      return true;
-    }
-
-    setStatus(documentStatusMessage, "Impossible de supprimer ce tableau.", "error");
+    openBrailleTableDeleteDialog(lineInput);
     return true;
   }
 
@@ -3964,6 +3811,15 @@ function onLineInput(event) {
       lineInput,
       event,
     );
+
+    const tableTag = brailleTableTag.parse(nextSourceText);
+    if (tableTag?.valid) {
+      expandBrailleTableTagAtLine(linePosition, tableTag);
+      return;
+    }
+    if (tableTag && !tableTag.valid && nextSourceText.trimEnd().endsWith(">")) {
+      setStatus(documentStatusMessage, tableTag.error, "error");
+    }
 
     lineSourceTextById.set(lineInput.id, nextSourceText);
     void translateLineToBrailleInPlace(lineInput, pageIndex, lineIndex, nextSourceText);
@@ -6628,11 +6484,6 @@ function onMenuActionRequest(payload) {
     return;
   }
 
-  if (payload.action === "insert-table") {
-    onInsertTableRequest();
-    return;
-  }
-
   if (payload.action === "apply-bold-style") {
     onApplyBoldStyle();
     return;
@@ -6732,6 +6583,9 @@ async function bootstrap() {
 }
 
 newDocumentForm.addEventListener("submit", onCreateDocument);
+if (brailleTableDeleteDialog instanceof HTMLDialogElement) {
+  brailleTableDeleteDialog.addEventListener("close", onBrailleTableDeleteDialogClose);
+}
 openDocumentButton.addEventListener("click", onOpenDocument);
 addPageButton.addEventListener("click", onAddPage);
 centerActiveLineButton.addEventListener("click", onCenterActiveLine);

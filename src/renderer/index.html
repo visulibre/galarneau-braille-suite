@@ -550,6 +550,31 @@
       </section>
     </main>
 
+    <dialog
+      id="braille-table-delete-dialog"
+      aria-labelledby="braille-table-delete-title"
+      aria-describedby="braille-table-delete-description"
+    >
+      <h2 id="braille-table-delete-title">Supprimer le tableau ?</h2>
+      <p id="braille-table-delete-description">
+        Confirme la suppression de toutes les lignes du tableau. Cette action ne peut pas être
+        annulée.
+      </p>
+      <form method="dialog" class="dialog-actions">
+        <button type="submit" value="cancel" class="button-secondary">Annuler</button>
+        <button
+          type="submit"
+          id="braille-table-delete-confirm-button"
+          value="confirm"
+          autofocus
+        >
+          Supprimer le tableau
+        </button>
+      </form>
+    </dialog>
+
+    <script src="./braille-table-tag.js"></script>
+    <script src="./braille-table-layout.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

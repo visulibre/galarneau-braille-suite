@@ -110,14 +110,18 @@
   Quand le curseur arrive sur un caractere special de structure, il est
   automatiquement recale sur le texte editable de la cellule (ou, a defaut,
   sur la premiere zone de texte de la ligne).
-  Depuis le premier delimiteur de la premiere ligne du tableau, la touche
-  `Delete` declenche une confirmation de suppression du tableau complet.
+  Depuis la premiere ligne structurelle du tableau, `Delete` ouvre une
+  boîte HTML intégrée (sans `window.confirm`) depuis n'importe quelle position
+  du curseur sur cette ligne, avec le focus initial sur la confirmation et une
+  annonce accessible demandant de confirmer ou annuler.
   Le reajustement des largeurs se base uniquement sur le texte des cellules
-  (titres de colonnes et items), pas sur les caracteres speciaux de structure.
-- Creation manuelle de tableaux braille depuis le menu **Insertion**:
-  l'action **Inserer un tableau...** demande le nombre de colonnes, le nombre
-  de rangees de contenu et la presence d'une rangee d'entete (oui/non), puis
-  insere la structure du tableau a la position active.
+  (titres de colonnes et items), pas sur les caracteres speciaux de structure;
+  il s'applique aussi apres la traduction instantanee du texte saisi.
+- Creation manuelle de tableaux braille sans dialogue: dans un document `.gnb`,
+  une balise seule `<tableau c=3 r=4 e>` saisie au clavier standard est
+  remplacée par une structure de tableau vide; `c` et `r` donnent les nombres
+  de colonnes (1-32) et de rangées de contenu (1-200), et `e` ajoute l'entête.
+  Sans `e`, le tableau n'a pas d'entête. Le menu **Insertion** a été retiré.
 - En pagination de tableau, quand un tableau se poursuit page suivante:
   une ligne de fin de tableau est forcee a l'avant-derniere ligne de la page
   courante, la derniere ligne restant reservee au numero de page braille ;
@@ -168,8 +172,9 @@
   - bascule temps réel en case à cocher (`Ctrl/Cmd + Shift + T`).
 - Menu **Édition**:
   - Centrer la ligne active (`Ctrl/Cmd + E`).
-- Menu **Insertion**:
-  - Inserer un tableau....
+- Creation de tableau: en document `.gnb`, saisir au clavier standard une
+  balise seule `<tableau c=3 r=4 e>` pour créer un tableau sans dialogue;
+  `e` ajoute l'entête. La balise est remplacée par la structure de tableau.
 - Saisie braille clavier 8 points:
   - `F D S J K L A ;` pour points `1..8`.
 - Traduction intégrée directement sous chaque ligne de l’éditeur en document
@@ -307,7 +312,8 @@
   - nouvelle entree **Insertion > Inserer un tableau...** cote menu principal ;
   - dialogue de saisie colonnes/rangees/entete (`oui`/`non`) dans le renderer ;
   - insertion de la structure du tableau a la position active, avec preservation
-    des protections et du reajustement deja en place.
+    des protections et du reajustement deja en place. Cette entree a ensuite ete
+    retiree au profit de la balise explicite `<tableau c=# r=# e>`, sans dialogue.
   Fichiers touches: `src/main/main.js`, `src/renderer/app.js`, `README.md`,
   `.github/project-memory.md`.
 

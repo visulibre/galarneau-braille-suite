@@ -178,6 +178,26 @@ button:disabled {
   cursor: not-allowed;
 }
 
+dialog {
+  max-width: min(32rem, calc(100vw - 2rem));
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--panel);
+  color: var(--text);
+  padding: 1.25rem;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
 .button-secondary {
   background: var(--secondary);
 }

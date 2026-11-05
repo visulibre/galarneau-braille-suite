@@ -222,15 +222,6 @@ function buildApplicationMenu() {
       ],
     },
     {
-      label: "Insertion",
-      submenu: [
-        {
-          label: "Insérer un tableau…",
-          click: () => sendMenuActionToRenderer("insert-table"),
-        },
-      ],
-    },
-    {
       label: "Affichage",
       submenu: [
         { role: "reload" },
