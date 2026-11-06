@@ -16,3 +16,13 @@ test("calculates each table column width from its longest cell", () => {
 test("keeps at least one display cell for empty columns", () => {
   assert.deepEqual(brailleTableLayout.getColumnWidths([["", "x"], ["", ""]]), [1, 1]);
 });
+
+test("ignores trailing layout spaces when computing column widths", () => {
+  assert.deepEqual(
+    brailleTableLayout.getColumnWidths([
+      ["abc   ", "x"],
+      ["a", "xy"],
+    ]),
+    [3, 2],
+  );
+});

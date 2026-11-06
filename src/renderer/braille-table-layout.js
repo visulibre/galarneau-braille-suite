@@ -18,9 +18,13 @@
     contentRows.forEach((rowCells) => {
       for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
         const cellValue = rowCells[columnIndex];
+        const visibleCellLength =
+          typeof cellValue === "string"
+            ? cellValue.replace(/\s+$/u, "").length
+            : 0;
         columnWidths[columnIndex] = Math.max(
           columnWidths[columnIndex],
-          typeof cellValue === "string" ? cellValue.replace(/\s+$/u, "").length : 0,
+          visibleCellLength,
         );
       }
     });

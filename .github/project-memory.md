@@ -770,6 +770,213 @@
   `src/main/braille-service.js`, `src/main/main.js`, `src/main/preload.js`,
   `src/renderer/app.js`, `native/README.md`, `package.json`, `README.md`,
   `.github/project-memory.md`.
+- 2026-11-05 : correctif rendu/navigation dans les tableaux braille en saisie
+  standard avec traduction instantanee:
+  - navigation `Flèche gauche/droite` rendue strictement colonne-par-colonne
+    via index de cellule (plus de sauts incoherents selon la position du
+    curseur) ;
+  - en ligne de tableau, la traduction instantanee conserve la ligne editee,
+    le caret courant et recale le curseur dans une cellule editable apres
+    rerendu ;
+  - pour les lignes de tableau, la source utilise la valeur de ligne courante
+    afin d'eviter l'ajout force en fin de ligne pendant la frappe.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: prioriser la stabilite d'edition des cellules de
+  tableau (position du curseur + saisie entre delimiteurs) en mode temps reel.
+  Reste a valider: test manuel complet d'edition tableau (`.gnb`) sur plusieurs
+  colonnes, avec et sans entete, en verifiant aussi `Home`/`End`.
+- 2026-11-05 : correction de regression sur la ligne de debut de tableau
+  (document braille en saisie standard): conversion instantanee adaptee aux
+  lignes de tableau par segments de cellule (texte non braille -> braille) en
+  preservant les caracteres de structure, ce qui retablit l'ecriture sur la
+  ligne de debut et maintient la saisie entre delimiteurs.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: les lignes de tableau ne passent plus par la
+  retraduction complete de la ligne structurelle; seule la partie texte des
+  cellules est convertie.
+  Reste a valider: scenario manuel de frappe continue sur premiere ligne de
+  contenu et sur ligne de debut de tableau continue apres saut de page.
+- 2026-11-05 : verrou d'edition des lignes structurelles de tableau
+  (dont la ligne de debut): les bordures ne sont plus modifiables au clavier
+  (frappe, collage, suppression, entree) et une tentative d'edition deplace
+  automatiquement le focus vers une ligne de cellules editable du meme tableau.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: conserver strictement l'integrite de la structure
+  du tableau et limiter l'edition au contenu des cellules.
+  Reste a valider: test manuel de la suppression de tableau (`Delete` sur
+  premiere ligne structurelle) pour confirmer que la boite de confirmation
+  reste prioritaire.
+- 2026-11-05 : ajustement de navigation horizontale en cellule de tableau:
+  `Flèche gauche/droite` se deplace caractere par caractere dans le texte tape,
+  et le saut vers colonne precedente/suivante ne se declenche qu'au contact
+  d'un delimiteur de colonne.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: conserver l'edition fine du texte en cellule sans
+  perdre la navigation inter-colonnes.
+  Reste a valider: test manuel du passage de colonne via fleches au bord des
+  cellules avec contenu court et contenu long.
+- 2026-11-05 : correction de l'ordre apparent des lettres en saisie tableau:
+  recalage du curseur apres traduction instantanee selon la longueur du prefixe
+  reellement converti en braille (au lieu d'un index brut avant conversion).
+  Ce correctif stabilise l'ordre de frappe quand la traduction ajoute des
+  indicateurs (ex. majuscules).
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: la position du caret suit la sortie braille traduite,
+  pas la position texte source brute.
+  Reste a valider: test manuel de saisie avec majuscules et ponctuation dans
+  plusieurs cellules consecutives.
+- 2026-11-05 : regle de passage inter-colonnes ajustee sur les bornes texte:
+  en ligne de contenu de tableau, `Flèche gauche/droite` reste caractere par
+  caractere dans la cellule et ne passe a la colonne voisine qu'au `debut`
+  (`gauche`) ou a la `fin` (`droite`) du texte utile de la cellule (hors
+  espaces de remplissage).
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: eviter tout basculement automatique de colonne avant
+  intention explicite de l'utilisateur au bord du texte.
+  Reste a valider: scenario manuel avec cellules vides et cellules contenant
+  des espaces internes.
+- 2026-11-05 : conservation des espaces de fin en cellule de tableau:
+  suppression du trim des cellules lors du parsing/rebuild et calcul de largeur
+  de colonnes base sur la longueur reelle des cellules. Ce changement permet
+  l'agrandissement de la colonne pendant la frappe (ex. `T`, espace, `e`) sans
+  deplacement involontaire vers la cellule suivante.
+  Fichiers touchés: `src/renderer/app.js`, `src/renderer/braille-table-layout.js`,
+  `.github/project-memory.md`.
+  Decision fonctionnelle: traiter les espaces de fin saisis comme du contenu
+  utilisateur en mode edition tableau.
+  Reste a valider: saisie de plusieurs espaces consecutifs en fin de cellule
+  sur plusieurs lignes de tableau.
+- 2026-11-05 : correction du saut de caret apres rerendu de ligne de tableau:
+  ajout d'un mecanisme de restauration du curseur qui suspend une fois le
+  recalage automatique sur delimiteur apres traduction instantanee. Le caret
+  reste a la position logique de frappe et n'est plus pousse vers la colonne
+  suivante quand la cellule vient d'etre rerendue.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: ne pas appliquer le snap de delimiteur pendant la
+  restauration programmee du curseur apres rerendu.
+  Reste a valider: saisie continue lettre par lettre en debut de cellule avec
+  conversion immediate (sans espace) sur colonnes de largeur minimale.
+- 2026-11-05 : correction des indicateurs de type "integral" en frappe continue
+  dans les cellules de tableau: abandon de la retraduction par segments isoles
+  et passage a une conversion cellule complete (retrotraduction braille->texte
+  du contenu existant, fusion avec la nouvelle frappe, puis traduction
+  texte->braille de la cellule entiere).
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: conserver le contexte lexical de la cellule pour
+  eviter les marqueurs appliques lettre par lettre.
+  Reste a valider: saisie rapide de mots mixtes (majuscules/minuscules) dans
+  plusieurs colonnes consecutives.
+- 2026-11-05 : regle explicite sur l'indicateur point 6 en cellule tableau:
+  si le contenu source de cellule contient plus d'une lettre, l'indicateur
+  point 6 en tete de cellule est retire apres traduction. Cette regle est
+  appliquee aussi au prefixe utilise pour recalage du curseur afin de garder
+  la coherence de position.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: en saisie continue de mot, privilegier une sortie
+  sans marqueur de lettre isolee en tete de cellule.
+  Reste a valider: cas des mots commençant par majuscule selon les attentes
+  metier (conserver ou retirer le point 6).
+- 2026-11-05 : renforcement point 6 avant majuscule en edition tableau:
+  la suppression vise maintenant explicitement le motif `point6 + indicateur
+  majuscule` en tete de cellule, avec un fallback base sur la frappe texte
+  courante de la cellule quand la reconstruction source est ambigue.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: retirer prioritairement le point 6 redondant avant
+  l'indicateur majuscule en saisie continue.
+  Reste a valider: sequences `Majuscule + lettre` tapees rapidement en debut de
+  cellule sur plusieurs colonnes.
+- 2026-11-05 : correction structurelle de la saisie tableau en mode standard:
+  abandon de la retrotraduction braille->texte pour reconstituer les cellules
+  pendant la frappe (instable en BFU) et remplacement par une source cellule
+  persistante basee sur la frappe utilisateur. Chaque cellule est retraduite a
+  partir de cette source, ce qui supprime les artefacts de type `point 6`
+  parasite en debut de mot (ex. `Test`).
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: la verite d'edition d'une cellule est la source texte
+  conservee par cellule, pas la ligne braille affichee.
+  Reste a valider: editions au milieu d'un mot existant (insertion/suppression)
+  dans une cellule deja remplie.
+- 2026-11-05 : stabilisation du curseur en edition tableau pendant la frappe:
+  le snap automatique sur delimiteur interne est desactive sur les evenements
+  `focus`/`selectionchange` (il reste actif pour les protections d'edition),
+  afin d'eviter le saut implicite vers la colonne suivante quand le caret est
+  en fin de cellule apres rerendu.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: le passage inter-colonnes doit rester intentionnel
+  (fleches/edition), pas provoque par un recalage automatique.
+  Reste a valider: frappe continue sur la premiere cellule d'un tableau a
+  plusieurs colonnes avec majuscule initiale.
+- 2026-11-05 : correction des espaces parasites en saisie de cellule tableau:
+  la reconstruction source d'une cellule editee utilise maintenant l'evenement
+  de saisie (`insert`/`delete`) au lieu de reutiliser les espaces visuels de
+  remplissage de colonne. Cela evite d'injecter des espaces avant la lettre
+  suivante (symptome observe des la 2e lettre).
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: les espaces de layout d'une colonne ne doivent jamais
+  devenir du contenu source de la cellule.
+  Reste a valider: insertion au milieu d'un mot et collage multi-caracteres
+  dans une cellule deja remplie.
+- 2026-11-05 : durcissement anti-espaces de layout dans les tableaux:
+  les cellules source composees uniquement d'espaces sont neutralisees avant
+  reconstruction de la frappe, et la creation de tableau initialise des sources
+  de cellules vides explicites (au lieu des espaces de padding affiches).
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: un espace de mise en page ne peut jamais etre
+  interprete comme un espace utilisateur, ce qui supprime le cas `T e` parasite
+  et la persistence associee du point 6.
+  Reste a valider: edition d'un tableau deja ouvert avant correctif (session
+  courante) vs tableau nouvellement cree.
+- 2026-11-05 : retrait agressif du point 6 en tete de cellule pendant la frappe:
+  en edition tableau, la normalisation retire desormais tout prefixe point 6
+  restant quand la cellule represente un mot en cours (plus d'une lettre), et
+  la reconstruction source en insertion sans `event.data` preserve explicitement
+  le prefixe deja tape pour eviter les regressions `T` -> `e`.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: en saisie continue d'un mot, un point 6 de lettre
+  isolee ne doit pas rester bloque en tete de cellule.
+  Reste a valider: frappe rapide majuscule puis minuscules dans une meme cellule
+  sur tableau existant deja ouvert.
+- 2026-11-05 : tentative de visibilite immediate des lettres pendant
+  contractions BFU (strategie retiree ensuite): un fallback visuel avait ete
+  ajoute pour forcer l'affichage de la 2e frappe, mais il a ete abandonne au
+  profit du rendu BFU normal + nettoyage au changement de colonne.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+- 2026-11-05 : retour au rendu BFU normal pendant la frappe + nettoyage sur
+  changement de colonne: la cellule est traduite normalement en direct, puis
+  quand le curseur quitte une colonne, le point 6 de tete est retire uniquement
+  pour la cellule quittée si elle contient plus d'une lettre. Le caret est
+  restaure dans la cellule d'arrivee apres rerendu.
+  Fichiers touchés: `src/renderer/app.js`, `src/renderer/braille-table-layout.js`,
+  `tests/braille-table-layout.test.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: separer l'affichage live (normal table active) et la
+  normalisation CBFU de fin de cellule (au changement de colonne).
+  Ajustement de layout: les largeurs de colonnes ignorent les espaces de
+  padding en fin de cellule, ce qui permet aux separateurs de se recoller au
+  texte apres suppression.
+  Reste a valider: frappe `T` puis `e` en cellule, puis deplacement vers la
+  colonne suivante pour confirmer disparition du point 6 et repositionnement
+  immediat des separateurs.
+- 2026-11-05 : ajustement des lignes de bordure/entete avec indicateurs de
+  colonnes: les lignes de debut, de separation (incluant la ligne de fin de
+  rang d'entete) et de fin sont maintenant reconstruites avec des separateurs
+  de colonnes a chaque colonne, et se recalculent avec la meme largeur que les
+  lignes de cellules.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: les lignes structurelles suivent le meme mouvement de
+  colonnes que le contenu (entete et corps), pour garder les indicateurs colles
+  a gauche/droite du texte.
+  Reste a valider: tableau avec entete (`<tableau ... e>`) en frappe + effacement
+  pour confirmer recalage simultane debut/entete/fin.
+- 2026-11-05 : correction du format structurel demande pour l'entete/tableau:
+  retour aux lignes pleines pour les bordures de debut et de fin (et ligne
+  pleine de fin d'entete), avec conservation de la ligne de contenu vide a
+  separateurs de colonnes pour saisir le texte d'entete. Le recalage dynamique
+  des largeurs reste actif.
+  Fichiers touchés: `src/renderer/app.js`, `.github/project-memory.md`.
+  Decision fonctionnelle: modele attendu = ligne pleine + ligne de cellules +
+  ligne pleine, sans separateurs internes sur les lignes pleines.
+  Reste a valider: rendu visuel exact sur creation de tableau avec entete,
+  puis apres saisie/effacement dans entete et corps.
 
 ## Prochaine étape naturelle
 
