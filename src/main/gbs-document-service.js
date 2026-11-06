@@ -85,6 +85,7 @@ const SUPPORTED_INPUT_MODES = new Set([
 ]);
 const BOOLEAN_FALSE_VALUES = new Set(["0", "false", "off", "no", "none", "nil"]);
 const IMPORT_CENTERED_LINE_MARKER = "\u0001GBS_CENTERED_LINE\u0001";
+const IMPORT_FORCED_PAGE_BREAK_MARKER = "[[GBS_PAGE_BREAK]]";
 const BRAILLE_TABLE_DELIMITER_CHARACTER = String.fromCodePoint(0x283f); // dots 1-2-3-4-5-6
 const BRAILLE_TABLE_HEADER_FILL_CHARACTER = String.fromCodePoint(0x281b); // dots 1-2-4-5
 const BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER = String.fromCodePoint(0x2836); // dots 2-3-5-6
@@ -504,6 +505,75 @@ function applyImportedCenterMarkers(inputText, lineWidth) {
         : normalizedLineValue;
     })
     .join("\n");
+}
+
+function applyImportedForcedPageBreakMarkers(inputText) {
+  if (typeof inputText !== "string" || inputText.length === 0) {
+    return "";
+  }
+
+  if (!inputText.includes("\f")) {
+    return inputText;
+  }
+
+  const pageSegments = inputText.split(/\f+/u);
+  const outputLines = [];
+
+  pageSegments.forEach((pageSegment, segmentIndex) => {
+    const normalizedPageSegment = pageSegment.replace(/^\n+/u, "").replace(/\n+$/u, "");
+
+    if (segmentIndex > 0) {
+      outputLines.push(IMPORT_FORCED_PAGE_BREAK_MARKER);
+    }
+
+    if (normalizedPageSegment.length === 0) {
+      return;
+    }
+
+    outputLines.push(...normalizedPageSegment.split("\n"));
+  });
+
+  return outputLines.join("\n");
+}
+
+function extractDocxDeclaredPageCountFromAppXml(appXmlContent) {
+  if (typeof appXmlContent !== "string" || appXmlContent.length === 0) {
+    return null;
+  }
+
+  const pagesMatch = appXmlContent.match(/<Pages>\s*([0-9]+)\s*<\/Pages>/iu);
+  if (!pagesMatch) {
+    return null;
+  }
+
+  const declaredPageCount = Number.parseInt(pagesMatch[1], 10);
+  return Number.isInteger(declaredPageCount) && declaredPageCount > 0
+    ? declaredPageCount
+    : null;
+}
+
+function buildPreparedImportedText(inputText, importOptions) {
+  const normalizedText = normalizeExtractedText(inputText);
+  const textWithForcedPageBreakMarkers = applyImportedForcedPageBreakMarkers(normalizedText);
+  return applyImportedCenterMarkers(
+    textWithForcedPageBreakMarkers,
+    importOptions.charactersPerLine,
+  );
+}
+
+function collectForcedPageBreakLineNumbers(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return [];
+  }
+
+  const forcedPageBreakLineNumbers = [];
+  lines.forEach((lineValue, lineIndex) => {
+    if (lineValue === IMPORT_FORCED_PAGE_BREAK_MARKER) {
+      forcedPageBreakLineNumbers.push(lineIndex + 1);
+    }
+  });
+
+  return forcedPageBreakLineNumbers;
 }
 
 function normalizeSpreadsheetCellValue(cellValue) {
@@ -1302,7 +1372,7 @@ function extractDocxRunText(runXml) {
 
   let output = "";
   const tokenMatcher =
-    /<w:t\b[^>]*>[\s\S]*?<\/w:t>|<w:tab\b[^/>]*\/>|<w:(?:br|cr)\b[^/>]*\/>|<w:noBreakHyphen\b[^/>]*\/>|<w:softHyphen\b[^/>]*\/>/giu;
+    /<w:t\b[^>]*>[\s\S]*?<\/w:t>|<w:tab\b[^/>]*\/>|<w:(?:br|cr)\b[^/>]*\/>|<w:lastRenderedPageBreak\b[^/>]*\/>|<w:noBreakHyphen\b[^/>]*\/>|<w:softHyphen\b[^/>]*\/>/giu;
   let tokenMatch;
 
   while ((tokenMatch = tokenMatcher.exec(runXml)) !== null) {
@@ -1313,8 +1383,14 @@ function extractDocxRunText(runXml) {
       continue;
     }
 
+    if (/^<w:lastRenderedPageBreak\b/iu.test(token)) {
+      output += "\f";
+      continue;
+    }
+
     if (/^<w:(?:br|cr)\b/iu.test(token)) {
-      output += "\n";
+      const breakType = readXmlAttributeValue(token, "w:type");
+      output += breakType && breakType.trim().toLowerCase() === "page" ? "\f" : "\n";
       continue;
     }
 
@@ -1475,7 +1551,11 @@ function extractDocxParagraphText(paragraphXml) {
     return "";
   }
 
-  let output = "";
+  const outputChunks = [];
+  const activeStyleState = { bold: false, italic: false, underline: false };
+  const appendOutputChunk = (chunkValue) => {
+    outputChunks.push(chunkValue);
+  };
   const runMatcher = /<w:r\b[\s\S]*?<\/w:r>/giu;
   let runMatch;
   let hasRun = false;
@@ -1484,15 +1564,101 @@ function extractDocxParagraphText(paragraphXml) {
     hasRun = true;
     const runXml = runMatch[0];
     const runText = extractDocxRunText(runXml);
+    if (runText.length === 0) {
+      continue;
+    }
+
     const runStyleState = extractDocxRunStyleState(runXml);
-    output += wrapTextWithBfuStyleTags(runText, runStyleState);
+    const effectiveRunStyleState = /[^\s]/u.test(runText)
+      ? runStyleState
+      : { bold: false, italic: false, underline: false };
+
+    applyInlineStyleTransition(
+      outputChunks,
+      activeStyleState,
+      effectiveRunStyleState,
+      appendOutputChunk,
+    );
+    appendOutputChunk(runText);
   }
 
+  applyInlineStyleTransition(
+    outputChunks,
+    activeStyleState,
+    { bold: false, italic: false, underline: false },
+    appendOutputChunk,
+  );
+
   if (hasRun) {
-    return output;
+    return outputChunks.join("");
   }
 
   return decodeXmlEntities(paragraphXml.replace(/<[^>]+>/gu, ""));
+}
+
+function extractDocxParagraphRunDescriptors(paragraphXml) {
+  if (typeof paragraphXml !== "string" || paragraphXml.length === 0) {
+    return [];
+  }
+
+  const runDescriptors = [];
+  const runMatcher = /<w:r\b[\s\S]*?<\/w:r>/giu;
+  let runMatch;
+
+  while ((runMatch = runMatcher.exec(paragraphXml)) !== null) {
+    const runXml = runMatch[0];
+    const runText = extractDocxRunText(runXml);
+    if (!/[^\s]/u.test(runText)) {
+      continue;
+    }
+
+    runDescriptors.push({
+      text: runText,
+      style: extractDocxRunStyleState(runXml),
+    });
+  }
+
+  return runDescriptors;
+}
+
+function containsLetterOrDigit(inputText) {
+  if (typeof inputText !== "string" || inputText.length === 0) {
+    return false;
+  }
+
+  try {
+    return /[\p{L}\p{N}]/u.test(inputText);
+  } catch {
+    return /[A-Za-z0-9À-ÖØ-öø-ÿ]/u.test(inputText);
+  }
+}
+
+function isDocxParagraphLikelyCenteredHeading(paragraphXml, paragraphText) {
+  if (typeof paragraphText !== "string" || paragraphText.length === 0) {
+    return false;
+  }
+
+  const plainText = stripBfuStyleTags(paragraphText)
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (plainText.length === 0 || plainText.length > 120) {
+    return false;
+  }
+
+  if (!containsLetterOrDigit(plainText)) {
+    return false;
+  }
+
+  if (!/[:：]$/u.test(plainText)) {
+    return false;
+  }
+
+  const runDescriptors = extractDocxParagraphRunDescriptors(paragraphXml);
+  if (runDescriptors.length === 0) {
+    return false;
+  }
+
+  return runDescriptors.every((runDescriptor) => runDescriptor.style.bold === true);
 }
 
 function extractDocxTextFromXml(xmlContent, paragraphCenterByStyleId = null) {
@@ -1507,8 +1673,11 @@ function extractDocxTextFromXml(xmlContent, paragraphCenterByStyleId = null) {
   while ((paragraphMatch = paragraphMatcher.exec(xmlContent)) !== null) {
     const paragraphXml = paragraphMatch[0];
     const paragraphText = extractDocxParagraphText(paragraphXml);
+    const shouldCenterParagraph =
+      isDocxParagraphCentered(paragraphXml, paragraphCenterByStyleId) ||
+      isDocxParagraphLikelyCenteredHeading(paragraphXml, paragraphText);
     paragraphs.push(
-      isDocxParagraphCentered(paragraphXml, paragraphCenterByStyleId)
+      shouldCenterParagraph
         ? markTextLinesAsCentered(paragraphText)
         : paragraphText,
     );
@@ -1520,7 +1689,11 @@ function extractDocxTextFromXml(xmlContent, paragraphCenterByStyleId = null) {
 
   const rawText = xmlContent
     .replace(/<w:tab\b[^/>]*\/>/giu, "\t")
-    .replace(/<w:(?:br|cr)\b[^/>]*\/>/giu, "\n")
+    .replace(/<w:lastRenderedPageBreak\b[^/>]*\/>/giu, "\f")
+    .replace(/<w:(?:br|cr)\b([^/>]*)\/>/giu, (fullMatch, attributesChunk = "") => {
+      const breakType = readXmlAttributeValue(attributesChunk, "w:type");
+      return breakType && breakType.trim().toLowerCase() === "page" ? "\f" : "\n";
+    })
     .replace(/<\/w:p>/giu, "\n")
     .replace(/<\/w:tr>/giu, "\n")
     .replace(/<[^>]+>/gu, "");
@@ -1903,6 +2076,11 @@ function extractOdfTextFromXml(xmlContent) {
 }
 
 async function extractTextFromDocxFile(filePath) {
+  const importPayload = await extractDocxImportPayload(filePath);
+  return importPayload.text;
+}
+
+async function extractDocxImportPayload(filePath) {
   const archiveBuffer = await fs.readFile(filePath);
   let archive;
 
@@ -1917,6 +2095,13 @@ async function extractTextFromDocxFile(filePath) {
     throw new Error("Le fichier DOCX ne contient pas de contenu lisible.");
   }
 
+  let declaredPageCount = null;
+  const appPropertiesEntry = archive.file("docProps/app.xml");
+  if (appPropertiesEntry) {
+    const appXmlContent = await appPropertiesEntry.async("string");
+    declaredPageCount = extractDocxDeclaredPageCountFromAppXml(appXmlContent);
+  }
+
   let paragraphCenterByStyleId = new Map();
   const stylesEntry = archive.file("word/styles.xml");
   if (stylesEntry) {
@@ -1925,7 +2110,12 @@ async function extractTextFromDocxFile(filePath) {
   }
 
   const xmlContent = await documentEntry.async("string");
-  return extractDocxTextFromXml(xmlContent, paragraphCenterByStyleId);
+  return {
+    text: extractDocxTextFromXml(xmlContent, paragraphCenterByStyleId),
+    metadata: {
+      declaredPageCount,
+    },
+  };
 }
 
 async function extractTextFromOdfFile(filePath) {
@@ -2083,17 +2273,24 @@ function buildPagesFromLines(lines, linesPerPage) {
   return pages;
 }
 
-function buildImportedDocumentFromText(inputText, importOptions) {
-  const normalizedText = normalizeExtractedText(inputText);
-  const centeredText = applyImportedCenterMarkers(
-    normalizedText,
-    importOptions.charactersPerLine,
-  );
+function buildImportedDocumentFromText(inputText, importOptions, importMetadataCollector = null) {
+  const centeredText = buildPreparedImportedText(inputText, importOptions);
   if (centeredText.length === 0) {
     throw new Error("Le fichier ne contient pas de texte exploitable.");
   }
 
   const lines = centeredText.split("\n");
+  const forcedPageBreakLineNumbers = collectForcedPageBreakLineNumbers(lines);
+
+  if (
+    importMetadataCollector &&
+    typeof importMetadataCollector === "object" &&
+    !Array.isArray(importMetadataCollector)
+  ) {
+    importMetadataCollector.forcedPageBreakLineNumbers = forcedPageBreakLineNumbers;
+    importMetadataCollector.forcedPageBreakCount = forcedPageBreakLineNumbers.length;
+  }
+
   const pages = buildPagesFromLines(lines, importOptions.linesPerPage);
   const now = new Date().toISOString();
 
@@ -2116,6 +2313,38 @@ function buildImportedDocumentFromText(inputText, importOptions) {
       pageLayout: normalizePageLayoutConfig(importOptions.pageLayout),
     },
     pages,
+  };
+}
+
+function buildDocxImportMetadata(docxExtractionMetadata, importBuildMetadata) {
+  const declaredPageCount = Number.isInteger(docxExtractionMetadata?.declaredPageCount)
+    ? docxExtractionMetadata.declaredPageCount
+    : null;
+  const sourcePageEndMarkerLineNumbers = Array.isArray(importBuildMetadata?.forcedPageBreakLineNumbers)
+    ? importBuildMetadata.forcedPageBreakLineNumbers.slice()
+    : [];
+  const detectedPageBreakCount = Number.isInteger(importBuildMetadata?.forcedPageBreakCount)
+    ? importBuildMetadata.forcedPageBreakCount
+    : sourcePageEndMarkerLineNumbers.length;
+  const detectedSourcePageCount =
+    detectedPageBreakCount > 0 ? detectedPageBreakCount + 1 : null;
+  const sourcePageCount = detectedSourcePageCount ?? declaredPageCount;
+  const sourcePageCountSource =
+    detectedSourcePageCount !== null
+      ? "explicit-breaks"
+      : declaredPageCount !== null
+        ? "doc-properties"
+        : "unknown";
+
+  return {
+    sourceType: "docx",
+    sourcePageCount,
+    sourcePageCountSource,
+    declaredPageCount,
+    detectedSourcePageCount,
+    detectedPageBreakCount,
+    sourcePageEndMarkerLineNumbers,
+    pageBreakMarker: IMPORT_FORCED_PAGE_BREAK_MARKER,
   };
 }
 
@@ -2360,23 +2589,48 @@ async function openDocument(payload, browserWindow) {
 
   if (!isInternalDocumentExtension(selectedPath)) {
     const importOptions = normalizeImportOptions(payload);
-    const extractedText = await extractTextFromExternalDocument(selectedPath, importOptions);
-    const importedDocumentPayload = buildImportedDocumentFromText(extractedText, importOptions);
+    let extractedText;
+    let docxExtractionMetadata = null;
+
+    if (selectedExtension === ".docx") {
+      const docxImportPayload = await extractDocxImportPayload(selectedPath);
+      extractedText = docxImportPayload.text;
+      docxExtractionMetadata = docxImportPayload.metadata;
+    } else {
+      extractedText = await extractTextFromExternalDocument(selectedPath, importOptions);
+    }
+
+    const importBuildMetadata = {};
+    const importedDocumentPayload = buildImportedDocumentFromText(
+      extractedText,
+      importOptions,
+      importBuildMetadata,
+    );
     const importedDocument = normalizeDocument(importedDocumentPayload, {
       fallbackDocumentType: DOCUMENT_TYPE_NORMAL,
     });
+    const importMetadata =
+      selectedExtension === ".docx"
+        ? buildDocxImportMetadata(docxExtractionMetadata, importBuildMetadata)
+        : null;
     const warning =
       selectedExtension === ".doc"
         ? "Import .doc: la recuperation du gras/italique/soulignement depend des donnees disponibles dans ce format legacy."
         : null;
 
-    return {
+    const response = {
       canceled: false,
       filePath: selectedPath,
       imported: true,
       warning,
       document: importedDocument,
     };
+
+    if (importMetadata) {
+      response.importMetadata = importMetadata;
+    }
+
+    return response;
   }
 
   const fileBuffer = await fs.readFile(selectedPath);

@@ -82,6 +82,7 @@ const BFU_STYLE_CLASS_BY_MARKUP_TAG = Object.freeze({
   surlignage: "underline",
   surlignement: "underline",
 });
+const TYPOGRAPHIC_APOSTROPHE_PATTERN = /[\u2018\u2019\u02bc]/gu;
 const BRAILLE_COLUMN_BLOCK_TAG_NAME = "cb";
 const BRAILLE_COLUMN_BLOCK_MAX_INDENT = 120;
 const BRAILLE_PARAGRAPH_TAG_NAME = "par";
@@ -97,6 +98,8 @@ const BRAILLE_CAPITAL_INDICATOR = String.fromCodePoint(0x2828); // dots 4-6
 const BRAILLE_CAPITAL_PASSAGE_START = String.fromCodePoint(0x2812); // dots 2-5
 const BRAILLE_EMPHASIS_INDICATOR = String.fromCodePoint(0x2838); // dots 4-5-6
 const BRAILLE_EMPHASIS_PASSAGE_START = String.fromCodePoint(0x2812); // dots 2-5
+const FALLBACK_PAGE_SEPARATOR_CHARACTER = "-";
+const FALLBACK_PAGE_NUMBER_FIELD_WIDTH = 3;
 
 let isTableLoadingReady = false;
 let tableLoadingFailure = null;
@@ -360,6 +363,13 @@ function normalizeNativePageLayout(pageLayout) {
       typeof source.braillePageNumbersInContents === "boolean"
         ? source.braillePageNumbersInContents
         : DEFAULT_NATIVE_PAGE_LAYOUT.braillePageNumbersInContents,
+    printPageNumber:
+      Number.isInteger(source.printPageNumber) &&
+      source.printPageNumber >= 1 &&
+      source.printPageNumber <= 9999
+        ? source.printPageNumber
+        : null,
+    printPageBreakAfterSegment: source.printPageBreakAfterSegment === true,
   };
 }
 
@@ -416,6 +426,14 @@ function ensureValidPayload(payload) {
   ensureValidNativeFormatting(payload.nativeFormatting);
 
   resolveSupportedTable(payload.table);
+}
+
+function normalizeTextToBrailleInput(inputText) {
+  if (typeof inputText !== "string" || inputText.length === 0) {
+    return "";
+  }
+
+  return inputText.replace(TYPOGRAPHIC_APOSTROPHE_PATTERN, "'");
 }
 
 function parseMarkupTagAt(inputText, startIndex) {
@@ -886,10 +904,16 @@ function translateBfuTextLines(table, parsedInput) {
       return translateTextToBrailleNative(table, line);
     }
 
-    return (
-      translateStringWithOptionalTypeforms(table, line, typeformValues) ??
-      translateTextToBrailleNative(table, line)
-    );
+    try {
+      const translatedLine = translateStringWithOptionalTypeforms(table, line, typeformValues);
+      if (typeof translatedLine === "string") {
+        return translatedLine;
+      }
+    } catch (_error) {
+      // Fallback handled below.
+    }
+
+    return liblouis.translateString(table, line);
   });
 
   return outputLines.join("\n");
@@ -968,6 +992,18 @@ function buildTypeformValues(internalStyleFlagsByChar, tableTypeformMasks) {
   });
 }
 
+function safeFreeLiblouisPointer(capi, pointer) {
+  if (!pointer) {
+    return;
+  }
+
+  try {
+    capi._free(pointer);
+  } catch (_error) {
+    // Ignore frees rejected after a runtime abort.
+  }
+}
+
 function translateStringWithOptionalTypeforms(table, inputText, typeformValues = null) {
   if (typeof inputText !== "string" || inputText.length === 0) {
     return "";
@@ -979,17 +1015,24 @@ function translateStringWithOptionalTypeforms(table, inputText, typeformValues =
     return null;
   }
 
-  const inputPointer = mem.transfer(capi, inputText);
+  let inputPointer = 0;
+  let outputPointer = 0;
+  let outputLengthPointer = 0;
+  let inputLengthPointer = 0;
+  let typeformPointer = 0;
+
+  const hasTypeforms = Array.isArray(typeformValues);
   const charSize = typeof liblouis.charSize === "function" ? liblouis.charSize() : 2;
   const outputCapacityChars = Math.max(inputText.length * 8, 256);
-  const outputPointer = capi._malloc((outputCapacityChars + 1) * charSize);
-  const outputLengthPointer = capi._malloc(4);
-  const inputLengthPointer = capi._malloc(4);
-  const hasTypeforms = Array.isArray(typeformValues);
   // liblouis expects a formtype* array; formtype is an unsigned short (16 bits).
-  const typeformPointer = hasTypeforms ? capi._malloc((inputText.length + 1) * 2) : 0;
 
   try {
+    inputPointer = mem.transfer(capi, inputText);
+    outputPointer = capi._malloc((outputCapacityChars + 1) * charSize);
+    outputLengthPointer = capi._malloc(4);
+    inputLengthPointer = capi._malloc(4);
+    typeformPointer = hasTypeforms ? capi._malloc((inputText.length + 1) * 2) : 0;
+
     if (hasTypeforms) {
       const typeformStartIndex = typeformPointer >> 1;
       for (let index = 0; index < inputText.length; index += 1) {
@@ -1026,14 +1069,14 @@ function translateStringWithOptionalTypeforms(table, inputText, typeformValues =
 
     const outputBuffer = mem.read(capi, outputPointer, outputLengthPointer);
     return mem.buffToString(outputBuffer);
+  } catch (_error) {
+    return null;
   } finally {
-    if (hasTypeforms) {
-      capi._free(typeformPointer);
-    }
-    capi._free(inputLengthPointer);
-    capi._free(outputLengthPointer);
-    capi._free(outputPointer);
-    capi._free(inputPointer);
+    safeFreeLiblouisPointer(capi, typeformPointer);
+    safeFreeLiblouisPointer(capi, inputLengthPointer);
+    safeFreeLiblouisPointer(capi, outputLengthPointer);
+    safeFreeLiblouisPointer(capi, outputPointer);
+    safeFreeLiblouisPointer(capi, inputPointer);
   }
 }
 
@@ -1058,9 +1101,13 @@ function isTypeformMaskEffective(table, typeformMask) {
 }
 
 function translateTextToBrailleNative(table, inputText) {
-  const outputText = translateStringWithOptionalTypeforms(table, inputText, null);
-  if (typeof outputText === "string") {
-    return outputText;
+  try {
+    const outputText = translateStringWithOptionalTypeforms(table, inputText, null);
+    if (typeof outputText === "string") {
+      return outputText;
+    }
+  } catch (_error) {
+    // Fallback handled below.
   }
 
   return liblouis.translateString(table, inputText);
@@ -1068,46 +1115,8 @@ function translateTextToBrailleNative(table, inputText) {
 
 function translateTextToBrailleWithBfuStyles(table, inputText) {
   const parsedInput = parseTextWithBfuStyleMarkers(inputText);
-  if (
-    !parsedInput.hasBfuStyleMarkers &&
-    !parsedInput.hasColumnIndentMarkers &&
-    !parsedInput.hasAnchorFrameMarkers &&
-    !parsedInput.hasSemanticMarkers
-  ) {
-    return translateTextToBrailleNative(table, inputText);
-  }
-
-  if (parsedInput.hasAnchorFrameMarkers) {
-    const outputText = translateBfuTextLines(table, parsedInput);
-    return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
-  }
-
-  if (!parsedInput.hasBfuStyleMarkers) {
-    const outputText = translateTextToBrailleNative(table, parsedInput.plainText);
-    return outputText;
-  }
-
-  if (parsedInput.plainText.length === 0) {
-    return applyAnchorFramesToBrailleText("", parsedInput.lineFrameConfigs);
-  }
-
-  const typeformMasks = getBfuTypeformMasksForTable(table);
-  const typeformValues = buildTypeformValues(parsedInput.internalStyleFlagsByChar, typeformMasks);
-
-  const hasActiveTypeform = typeformValues.some((maskValue) => maskValue > 0);
-  if (!hasActiveTypeform) {
-    const outputText = translateTextToBrailleNative(table, parsedInput.plainText);
-    return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
-  }
-
-  const outputText = translateStringWithOptionalTypeforms(table, parsedInput.plainText, typeformValues);
-
-  if (typeof outputText === "string") {
-    return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
-  }
-
-  const fallbackOutputText = translateTextToBrailleNative(table, parsedInput.plainText);
-  return applyAnchorFramesToBrailleText(fallbackOutputText, parsedInput.lineFrameConfigs);
+  const outputText = translateBfuTextLines(table, parsedInput);
+  return applyAnchorFramesToBrailleText(outputText, parsedInput.lineFrameConfigs);
 }
 
 function resolveNativeTableFile(table) {
@@ -1132,6 +1141,312 @@ function resolveNativeFormatting(payload) {
       : 40,
     pageLayout: normalizeNativePageLayout(formatting?.pageLayout),
   };
+}
+
+function normalizeBrailleOutputTextLineEndings(outputText) {
+  if (typeof outputText !== "string") {
+    return "";
+  }
+
+  return outputText.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n");
+}
+
+function truncateBrailleLineToWidth(lineValue, lineWidth) {
+  const safeLine = typeof lineValue === "string" ? lineValue : "";
+  if (!Number.isInteger(lineWidth) || lineWidth <= 0 || safeLine.length <= lineWidth) {
+    return safeLine;
+  }
+
+  return safeLine.slice(0, lineWidth);
+}
+
+function wrapBrailleLineToWidth(lineValue, lineWidth) {
+  const safeLine = typeof lineValue === "string" ? lineValue : "";
+  const safeWidth = Number.isInteger(lineWidth) && lineWidth > 0 ? lineWidth : 40;
+  if (safeLine.length <= safeWidth) {
+    return [safeLine];
+  }
+
+  const wrappedLines = [];
+  let remaining = safeLine;
+
+  while (remaining.length > safeWidth) {
+    let splitIndex = remaining.lastIndexOf(" ", safeWidth);
+    if (splitIndex <= 0) {
+      splitIndex = safeWidth;
+    }
+
+    const chunk = remaining.slice(0, splitIndex).trimEnd();
+    wrappedLines.push(chunk.length > 0 ? chunk : remaining.slice(0, safeWidth));
+
+    if (splitIndex === safeWidth) {
+      remaining = remaining.slice(safeWidth);
+    } else {
+      remaining = remaining.slice(splitIndex + 1);
+    }
+  }
+
+  wrappedLines.push(remaining);
+  return wrappedLines;
+}
+
+function wrapBrailleOutputLines(outputText, lineWidth) {
+  const sourceLines = normalizeBrailleOutputTextLineEndings(outputText).split("\n");
+  const wrappedLines = [];
+
+  sourceLines.forEach((sourceLine) => {
+    if (sourceLine.length === 0) {
+      wrappedLines.push("");
+      return;
+    }
+
+    wrappedLines.push(...wrapBrailleLineToWidth(sourceLine, lineWidth));
+  });
+
+  while (wrappedLines.length > 1 && wrappedLines[wrappedLines.length - 1] === "") {
+    wrappedLines.pop();
+  }
+
+  return wrappedLines.length > 0 ? wrappedLines : [""];
+}
+
+function buildFallbackPageSeparatorLine(pageNumber, lineWidth, includePageNumber) {
+  const safeWidth = Number.isInteger(lineWidth) && lineWidth > 0 ? lineWidth : 1;
+  if (!includePageNumber) {
+    return FALLBACK_PAGE_SEPARATOR_CHARACTER.repeat(safeWidth);
+  }
+
+  const pageLabel = ` ${pageNumber} `;
+  if (pageLabel.length >= safeWidth) {
+    return pageLabel.slice(0, safeWidth);
+  }
+
+  const fillerLength = safeWidth - pageLabel.length;
+  const leftFillerLength = Math.floor(fillerLength / 2);
+  const rightFillerLength = fillerLength - leftFillerLength;
+
+  return (
+    FALLBACK_PAGE_SEPARATOR_CHARACTER.repeat(leftFillerLength) +
+    pageLabel +
+    FALLBACK_PAGE_SEPARATOR_CHARACTER.repeat(rightFillerLength)
+  );
+}
+
+function buildFallbackBraillePageNumberLine(table, pageNumber, pageNumberCache) {
+  if (pageNumberCache.has(pageNumber)) {
+    return pageNumberCache.get(pageNumber);
+  }
+
+  const rawBrailleNumberLine = translateTextToBrailleNative(table, String(pageNumber));
+  const brailleNumberLine =
+    normalizeBrailleOutputTextLineEndings(rawBrailleNumberLine).split("\n")[0] ?? String(pageNumber);
+
+  pageNumberCache.set(pageNumber, brailleNumberLine);
+  return brailleNumberLine;
+}
+
+function buildFallbackRightAlignedPageNumberLine(lineWidth, rawPageNumberToken) {
+  const safeLineWidth = Number.isInteger(lineWidth) && lineWidth > 0 ? lineWidth : 1;
+  const fieldWidth = Math.min(FALLBACK_PAGE_NUMBER_FIELD_WIDTH, safeLineWidth);
+  const normalizedToken =
+    typeof rawPageNumberToken === "string"
+      ? rawPageNumberToken.trim()
+      : String(rawPageNumberToken ?? "");
+  const tokenInField =
+    normalizedToken.length <= fieldWidth
+      ? normalizedToken.padStart(fieldWidth, " ")
+      : normalizedToken.slice(-fieldWidth);
+
+  return `${" ".repeat(safeLineWidth - fieldWidth)}${tokenInField}`;
+}
+
+function buildFallbackPageHeaderLines(
+  table,
+  printPageNumber,
+  braillePageNumber,
+  pageLayout,
+  pageNumberCache,
+  lineWidth,
+) {
+  const headerLines = [];
+
+  if (pageLayout.printPages && pageLayout.printPageNumberAt === "top") {
+    headerLines.push(
+      buildFallbackRightAlignedPageNumberLine(lineWidth, String(printPageNumber)),
+    );
+  }
+
+  if (pageLayout.braillePages && pageLayout.numberBraillePages && pageLayout.braillePageNumberAt === "top") {
+    headerLines.push(
+      buildFallbackRightAlignedPageNumberLine(
+        lineWidth,
+        buildFallbackBraillePageNumberLine(table, braillePageNumber, pageNumberCache),
+      ),
+    );
+  }
+
+  return headerLines;
+}
+
+function buildFallbackPageFooterLines(
+  table,
+  printPageNumber,
+  braillePageNumber,
+  pageLayout,
+  lineWidth,
+  pageNumberCache,
+  includeSeparator,
+) {
+  const footerLines = [];
+
+  if (includeSeparator) {
+    footerLines.push(
+      buildFallbackPageSeparatorLine(
+        printPageNumber,
+        lineWidth,
+        pageLayout.pageSeparatorNumber,
+      ),
+    );
+  }
+
+  if (pageLayout.printPages && pageLayout.printPageNumberAt === "bottom") {
+    footerLines.push(
+      buildFallbackRightAlignedPageNumberLine(lineWidth, String(printPageNumber)),
+    );
+  }
+
+  if (
+    pageLayout.braillePages &&
+    pageLayout.numberBraillePages &&
+    pageLayout.braillePageNumberAt === "bottom"
+  ) {
+    footerLines.push(
+      buildFallbackRightAlignedPageNumberLine(
+        lineWidth,
+        buildFallbackBraillePageNumberLine(table, braillePageNumber, pageNumberCache),
+      ),
+    );
+  }
+
+  return footerLines;
+}
+
+function applyFallbackProductionPageLayout(table, payload, outputText) {
+  const nativeFormatting = resolveNativeFormatting(payload);
+  const linesPerPage = nativeFormatting.linesPerPage;
+  const lineWidth = nativeFormatting.charactersPerLine;
+  const pageLayout = nativeFormatting.pageLayout;
+  const requiresVisualPageLayout =
+    pageLayout.printPages === true ||
+    (pageLayout.braillePages === true && pageLayout.numberBraillePages === true) ||
+    (pageLayout.printPages === true && pageLayout.pageSeparator === true);
+
+  if (!requiresVisualPageLayout) {
+    return normalizeBrailleOutputTextLineEndings(outputText);
+  }
+
+  const wrappedLines = wrapBrailleOutputLines(outputText, lineWidth);
+  const pageSegments = [];
+  const pageNumberCache = new Map();
+  const fixedPrintPageNumber =
+    Number.isInteger(pageLayout.printPageNumber) && pageLayout.printPageNumber >= 1
+      ? pageLayout.printPageNumber
+      : null;
+  const shouldInsertPrintSeparatorAtSegmentEnd = pageLayout.printPageBreakAfterSegment === true;
+
+  let contentLineIndex = 0;
+  let braillePageNumber = pageLayout.beginningPageNumber;
+  let printPageNumber =
+    fixedPrintPageNumber === null ? pageLayout.beginningPageNumber : fixedPrintPageNumber;
+
+  const buildFallbackPageSlice = (includeSeparator) => {
+    let headerLines = buildFallbackPageHeaderLines(
+      table,
+      printPageNumber,
+      braillePageNumber,
+      pageLayout,
+      pageNumberCache,
+      lineWidth,
+    );
+    let footerLines = buildFallbackPageFooterLines(
+      table,
+      printPageNumber,
+      braillePageNumber,
+      pageLayout,
+      lineWidth,
+      pageNumberCache,
+      includeSeparator,
+    );
+
+    if (headerLines.length + footerLines.length >= linesPerPage && includeSeparator) {
+      footerLines = buildFallbackPageFooterLines(
+        table,
+        printPageNumber,
+        braillePageNumber,
+        pageLayout,
+        lineWidth,
+        pageNumberCache,
+        false,
+      );
+    }
+
+    while (headerLines.length + footerLines.length >= linesPerPage && footerLines.length > 0) {
+      footerLines = footerLines.slice(0, -1);
+    }
+
+    while (headerLines.length + footerLines.length >= linesPerPage && headerLines.length > 0) {
+      headerLines = headerLines.slice(0, -1);
+    }
+
+    const contentCapacity = Math.max(1, linesPerPage - headerLines.length - footerLines.length);
+    const rawPageContentLines = wrappedLines.slice(contentLineIndex, contentLineIndex + contentCapacity);
+    const consumedContentLineCount = rawPageContentLines.length;
+    const pageContentLines = rawPageContentLines.slice();
+
+    while (pageContentLines.length < contentCapacity) {
+      pageContentLines.push("");
+    }
+
+    return {
+      consumedContentLineCount,
+      pageLines: [...headerLines, ...pageContentLines, ...footerLines],
+    };
+  };
+
+  while (contentLineIndex < wrappedLines.length || pageSegments.length === 0) {
+    const defaultIncludeSeparator =
+      pageLayout.printPages === true &&
+      pageLayout.pageSeparator === true &&
+      fixedPrintPageNumber === null;
+
+    let pageSlice = buildFallbackPageSlice(defaultIncludeSeparator);
+    const isFinalBraillePageForSegment =
+      contentLineIndex + pageSlice.consumedContentLineCount >= wrappedLines.length;
+    const shouldAddPrintSeparatorForSegmentBoundary =
+      fixedPrintPageNumber !== null &&
+      shouldInsertPrintSeparatorAtSegmentEnd &&
+      pageLayout.printPages === true &&
+      pageLayout.pageSeparator === true &&
+      isFinalBraillePageForSegment;
+
+    if (shouldAddPrintSeparatorForSegmentBoundary) {
+      pageSlice = buildFallbackPageSlice(true);
+    }
+
+    contentLineIndex += pageSlice.consumedContentLineCount;
+
+    const pageLines = pageSlice.pageLines.map((lineValue) =>
+      truncateBrailleLineToWidth(lineValue, lineWidth),
+    );
+    pageSegments.push(pageLines.join("\n"));
+
+    braillePageNumber += 1;
+    if (fixedPrintPageNumber === null) {
+      printPageNumber += 1;
+    }
+  }
+
+  return pageSegments.join("\f");
 }
 
 function translateWithLiblouisJavascript(table, payload) {
@@ -1285,7 +1600,11 @@ function translateForProduction(table, payload) {
 
   const parsedInput = parseTextWithBfuStyleMarkers(payload.inputText);
   if (parsedInput.hasBfuStyleMarkers || parsedInput.hasAnchorFrameMarkers) {
-    const outputText = translateWithLiblouisJavascript(table, payload);
+    const outputText = applyFallbackProductionPageLayout(
+      table,
+      payload,
+      translateWithLiblouisJavascript(table, payload),
+    );
 
     let warning =
       "La traduction contient des marqueurs de style BFU et reste traitee par liblouis-js " +
@@ -1304,6 +1623,8 @@ function translateForProduction(table, payload) {
         " Le balisage <h1>/<h2>/<p> est traduit sans mise en page sémantique " +
         "parce que les styles BFU ou les encadrés utilisent le moteur JavaScript.";
     }
+    warning +=
+      " La pagination (numéros de page et séparateurs) est appliquée via le moteur JavaScript.";
 
     return normalizeTranslationResult({
       outputText,
@@ -1331,7 +1652,11 @@ function translateForProduction(table, payload) {
         executionMode: "production",
       });
     } catch (error) {
-      const outputText = translateWithLiblouisJavascript(table, payload);
+      const outputText = applyFallbackProductionPageLayout(
+        table,
+        payload,
+        translateWithLiblouisJavascript(table, payload),
+      );
       const reason = error instanceof Error ? error.message : String(error);
 
       return normalizeTranslationResult({
@@ -1340,7 +1665,7 @@ function translateForProduction(table, payload) {
         executionMode: "production",
         warning:
           "Le moteur natif liblouisutdml n'a pas pu appliquer les sémantiques .sem. " +
-          "Bascule automatique vers liblouis-js. " +
+          "Bascule automatique vers liblouis-js avec pagination JavaScript. " +
           `Detail: ${reason}`,
       });
     }
@@ -1362,7 +1687,11 @@ function translateForProduction(table, payload) {
       executionMode: "production",
     });
   } catch (error) {
-    const outputText = translateWithLiblouisJavascript(table, payload);
+    const outputText = applyFallbackProductionPageLayout(
+      table,
+      payload,
+      translateWithLiblouisJavascript(table, payload),
+    );
     const reason = error instanceof Error ? error.message : String(error);
 
     return normalizeTranslationResult({
@@ -1370,7 +1699,8 @@ function translateForProduction(table, payload) {
       engine: "liblouis-js-production-fallback",
       executionMode: "production",
       warning:
-        "Le moteur natif liblouisutdml n'a pas pu etre utilise. Bascule automatique vers liblouis-js. " +
+        "Le moteur natif liblouisutdml n'a pas pu etre utilise. " +
+        "Bascule automatique vers liblouis-js avec pagination JavaScript. " +
         `Detail: ${reason}`,
     });
   }
@@ -1380,19 +1710,27 @@ function translate(payload) {
   ensureTableLoadingReady();
   ensureValidPayload(payload);
 
-  const table = resolveSupportedTable(payload.table);
-  const executionMode = normalizeExecutionMode(payload.executionMode);
+  const normalizedPayload =
+    payload.direction === "text-to-braille"
+      ? {
+          ...payload,
+          inputText: normalizeTextToBrailleInput(payload.inputText),
+        }
+      : payload;
+
+  const table = resolveSupportedTable(normalizedPayload.table);
+  const executionMode = normalizeExecutionMode(normalizedPayload.executionMode);
   const result =
     executionMode === "production"
-      ? translateForProduction(table, payload)
-      : translateForPreview(table, payload);
+      ? translateForProduction(table, normalizedPayload)
+      : translateForPreview(table, normalizedPayload);
 
   if (typeof result.outputText !== "string") {
     throw new Error("La traduction a échoué sans message exploitable.");
   }
 
   const outputText =
-    payload.direction === "text-to-braille" && isFrenchBfuTable(table)
+    normalizedPayload.direction === "text-to-braille" && isFrenchBfuTable(table)
       ? applyBfuCapitalPassageIndicators(
           result.engine === "native-liblouisutdml"
             ? result.outputText

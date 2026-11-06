@@ -2634,6 +2634,65 @@ function isProtectedBrailleTableCharacter(character) {
   return typeof character === "string" && BRAILLE_TABLE_PROTECTED_CHARACTERS.has(character);
 }
 
+function isBrailleTableBlockStructureValid(flatLines, tableBounds) {
+  if (!Array.isArray(flatLines) || !tableBounds) {
+    return false;
+  }
+
+  const { startFlatIndex, endFlatIndex } = tableBounds;
+  if (
+    !Number.isInteger(startFlatIndex) ||
+    !Number.isInteger(endFlatIndex) ||
+    startFlatIndex < 0 ||
+    endFlatIndex < startFlatIndex ||
+    endFlatIndex >= flatLines.length
+  ) {
+    return false;
+  }
+
+  const tableLineCount = endFlatIndex - startFlatIndex + 1;
+  if (tableLineCount < 3) {
+    return false;
+  }
+
+  const firstLine = flatLines[startFlatIndex] ?? "";
+  const lastLine = flatLines[endFlatIndex] ?? "";
+  if (!isBrailleTableBorderLineValue(firstLine) || !isBrailleTableBorderLineValue(lastLine)) {
+    return false;
+  }
+
+  let contentLineCount = 0;
+  for (let flatLineIndex = startFlatIndex; flatLineIndex <= endFlatIndex; flatLineIndex += 1) {
+    const lineValue = flatLines[flatLineIndex] ?? "";
+    if (!isBrailleTableLineValue(lineValue)) {
+      return false;
+    }
+
+    if (!isBrailleTableBorderLineValue(lineValue)) {
+      contentLineCount += 1;
+    }
+  }
+
+  return contentLineCount > 0;
+}
+
+function isLineInputInsideBrailleTableBlock(lineInput) {
+  if (!isLineInput(lineInput) || !isBrailleTableLineValue(lineInput.value)) {
+    return false;
+  }
+
+  const linePosition = getLinePositionFromInput(lineInput);
+  if (!linePosition) {
+    return false;
+  }
+
+  const currentFlatIndex = getFlatLineIndex(linePosition.pageIndex, linePosition.lineIndex);
+  const currentLines = flattenDocumentLines();
+  const tableBounds = findBrailleTableBoundsAroundFlatIndex(currentLines, currentFlatIndex);
+
+  return tableBounds !== null;
+}
+
 function getBrailleTableDelimiterPositions(lineValue) {
   if (!isBrailleTableLineValue(lineValue)) {
     return [];
@@ -2876,10 +2935,14 @@ function findBrailleTableBoundsAroundFlatIndex(flatLines, aroundFlatIndex) {
     endFlatIndex += 1;
   }
 
-  return {
+  const tableBounds = {
     startFlatIndex,
     endFlatIndex,
   };
+
+  return isBrailleTableBlockStructureValid(flatLines, tableBounds)
+    ? tableBounds
+    : null;
 }
 
 function classifyBrailleTableBorderFillCharacter(lineValue) {
@@ -3216,7 +3279,7 @@ function normalizeBrailleTableBlockInFlatLines(flatLines, aroundFlatIndex) {
 }
 
 function isAtBrailleTableDeleteTriggerPosition(lineInput) {
-  if (!isLineInput(lineInput) || !isBrailleTableLineValue(lineInput.value)) {
+  if (!isLineInputInsideBrailleTableBlock(lineInput)) {
     return false;
   }
 
@@ -4358,7 +4421,7 @@ function moveCaretToBrailleTableLineBoundary(lineInput, boundary) {
 }
 
 function preventBrailleTableDelimiterEditFromKeyDown(event, lineInput) {
-  if (!isLineInput(lineInput) || !isBrailleTableLineValue(lineInput.value)) {
+  if (!isLineInputInsideBrailleTableBlock(lineInput)) {
     return false;
   }
 
@@ -4451,7 +4514,7 @@ function preventBrailleTableDelimiterEditFromKeyDown(event, lineInput) {
 
 function onLineBeforeInput(event) {
   const lineInput = event.currentTarget;
-  if (!isLineInput(lineInput) || !isBrailleTableLineValue(lineInput.value)) {
+  if (!isLineInputInsideBrailleTableBlock(lineInput)) {
     return;
   }
 
@@ -4543,7 +4606,7 @@ function onLineInput(event) {
   const { pageIndex, lineIndex } = linePosition;
 
   if (shouldTranslateLineToBrailleInPlace()) {
-    if (isBrailleTableLineValue(lineInput.value)) {
+    if (isLineInputInsideBrailleTableBlock(lineInput)) {
       void translateBrailleTableLineToBrailleInPlace(lineInput, pageIndex, lineIndex, event);
       return;
     }
@@ -5207,7 +5270,7 @@ function onLineNavigationKeyDown(event) {
   ) {
     let handledByTableNavigation = false;
 
-    if (isBrailleTableLineValue(lineInput.value)) {
+    if (isLineInputInsideBrailleTableBlock(lineInput)) {
       if (event.key === "Home") {
         event.preventDefault();
         moveCaretToBrailleTableLineBoundary(lineInput, "start");
@@ -5861,7 +5924,12 @@ async function translateDocumentWithForcedPageBreaks(options) {
   const shouldAdjustBrailleBeginningNumber =
     executionMode === TRANSLATION_EXECUTION_MODE_PRODUCTION &&
     pageLayout.numberBraillePages === true;
+  const shouldTrackOriginalPrintPageNumber =
+    executionMode === TRANSLATION_EXECUTION_MODE_PRODUCTION &&
+    direction === "text-to-braille" &&
+    hasForcedPageBreaks;
   let nextBeginningPageNumber = pageLayout.beginningPageNumber;
+  let nextPrintPageNumber = pageLayout.beginningPageNumber;
 
   for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
     const segmentLines = segments[segmentIndex];
@@ -5875,9 +5943,20 @@ async function translateDocumentWithForcedPageBreaks(options) {
       continue;
     }
 
-    const segmentNativeFormatting = shouldAdjustBrailleBeginningNumber
+    const segmentNativeFormattingBase = shouldAdjustBrailleBeginningNumber
       ? buildNativeFormattingForSegment(nativeFormatting, nextBeginningPageNumber)
       : nativeFormatting;
+    const segmentNativeFormatting =
+      shouldTrackOriginalPrintPageNumber && segmentNativeFormattingBase
+        ? {
+            ...segmentNativeFormattingBase,
+            pageLayout: {
+              ...normalizePageLayoutConfig(segmentNativeFormattingBase.pageLayout),
+              printPageNumber: nextPrintPageNumber,
+              printPageBreakAfterSegment: segmentIndex + 1 < segments.length,
+            },
+          }
+        : segmentNativeFormattingBase;
     const response = await window.brailleApi.translate({
       table,
       direction,
@@ -5905,6 +5984,10 @@ async function translateDocumentWithForcedPageBreaks(options) {
 
     if (shouldAdjustBrailleBeginningNumber) {
       nextBeginningPageNumber += countBraillePagesInOutputText(response.outputText);
+    }
+
+    if (shouldTrackOriginalPrintPageNumber) {
+      nextPrintPageNumber += 1;
     }
   }
 
@@ -7088,6 +7171,59 @@ function buildOpenDocumentRequestPayload() {
   };
 }
 
+function getDocxImportPageCountSourceLabel(sourceLabel) {
+  switch (sourceLabel) {
+    case "explicit-breaks":
+      return "sauts de page explicites";
+    case "doc-properties":
+      return "metadonnee Word";
+    default:
+      return "source inconnue";
+  }
+}
+
+function buildDocxImportPaginationStatusMessage(importMetadata) {
+  if (!importMetadata || typeof importMetadata !== "object") {
+    return null;
+  }
+
+  if (importMetadata.sourceType !== "docx") {
+    return null;
+  }
+
+  const sourcePageCount =
+    Number.isInteger(importMetadata.sourcePageCount) && importMetadata.sourcePageCount > 0
+      ? importMetadata.sourcePageCount
+      : null;
+  const sourcePageCountSourceLabel = getDocxImportPageCountSourceLabel(
+    importMetadata.sourcePageCountSource,
+  );
+  const sourcePageCountMessage =
+    sourcePageCount === null
+      ? "Pagination DOCX: nombre de pages indetermine."
+      : `Pagination DOCX: ${sourcePageCount} page${sourcePageCount > 1 ? "s" : ""} (${sourcePageCountSourceLabel}).`;
+
+  const detectedPageBreakCount =
+    Number.isInteger(importMetadata.detectedPageBreakCount) && importMetadata.detectedPageBreakCount > 0
+      ? importMetadata.detectedPageBreakCount
+      : 0;
+  if (detectedPageBreakCount === 0) {
+    return `${sourcePageCountMessage} Aucune fin de page explicite detectee dans le XML DOCX.`;
+  }
+
+  const markerValue =
+    typeof importMetadata.pageBreakMarker === "string" && importMetadata.pageBreakMarker.length > 0
+      ? importMetadata.pageBreakMarker
+      : "[[GBS_PAGE_BREAK]]";
+
+  return (
+    `${sourcePageCountMessage} ${detectedPageBreakCount} fin` +
+    `${detectedPageBreakCount > 1 ? "s" : ""} de page detectee` +
+    `${detectedPageBreakCount > 1 ? "s" : ""} ` +
+    `(marqueur ${markerValue}).`
+  );
+}
+
 async function onOpenDocument() {
   if (isCreateLoading || isCreateLocked || isFileBusy || isTranslationBusy) {
     return;
@@ -7130,13 +7266,16 @@ async function onOpenDocument() {
       typeof response.warning === "string" && response.warning.length > 0
         ? response.warning
         : null;
+    const importPaginationMessage = buildDocxImportPaginationStatusMessage(
+      response.importMetadata,
+    );
     const openedDocumentMessage =
       response.imported === true
         ? `Document importe: ${toFileName(response.filePath)}.`
         : `Document ouvert: ${toFileName(response.filePath)}.`;
-    const statusMessage = importWarning
-      ? `${openedDocumentMessage} ${importWarning}`
-      : openedDocumentMessage;
+    const statusMessage = [openedDocumentMessage, importPaginationMessage, importWarning]
+      .filter((messageChunk) => typeof messageChunk === "string" && messageChunk.length > 0)
+      .join(" ");
     setStatus(
       documentStatusMessage,
       statusMessage,
