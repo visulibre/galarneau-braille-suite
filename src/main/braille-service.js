@@ -94,6 +94,12 @@ const BRAILLE_TABLE_HEADER_FILL_CHARACTER = String.fromCodePoint(0x281b); // dot
 const BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER = String.fromCodePoint(0x2836); // dots 2-3-5-6
 const BRAILLE_FRAME_OPEN_CHARACTER = String.fromCodePoint(0x2836); // dots 2-3-5-6
 const BRAILLE_FRAME_CLOSE_CHARACTER = String.fromCodePoint(0x281b); // dots 1-2-4-5
+const BOX_DRAWING_TOP_LEFT = "┌";
+const BOX_DRAWING_TOP_RIGHT = "┐";
+const BOX_DRAWING_BOTTOM_LEFT = "└";
+const BOX_DRAWING_BOTTOM_RIGHT = "┘";
+const BOX_DRAWING_HORIZONTAL = "─";
+const BOX_DRAWING_VERTICAL = "│";
 const BRAILLE_CAPITAL_INDICATOR = String.fromCodePoint(0x2828); // dots 4-6
 const BRAILLE_CAPITAL_PASSAGE_START = String.fromCodePoint(0x2812); // dots 2-5
 const BRAILLE_EMPHASIS_INDICATOR = String.fromCodePoint(0x2838); // dots 4-5-6
@@ -637,33 +643,71 @@ function getOrCreateLineFrameConfig(lineFrameConfigs, lineIndex) {
 }
 
 function applyAnchorFrameToBrailleLine(lineValue, minEndColumn = null) {
-  let framedLine = typeof lineValue === "string" ? lineValue : "";
+  const safeLine = typeof lineValue === "string" ? lineValue : "";
+  const requestedFrameLength =
+    Number.isInteger(minEndColumn) && minEndColumn > 0 ? minEndColumn : 0;
+  const minimumFrameLength = 3;
+  const naturalFrameLength = Math.max(minimumFrameLength, safeLine.length + 2);
+  const resolvedFrameLength = Math.max(naturalFrameLength, requestedFrameLength);
+  const contentWidth = Math.max(1, resolvedFrameLength - 2);
+  const framedContent = safeLine.padEnd(contentWidth, " ");
 
-  const naturalEndColumn = framedLine.length;
-  if (Number.isInteger(minEndColumn) && minEndColumn > naturalEndColumn) {
-    framedLine += " ".repeat(minEndColumn - naturalEndColumn);
+  return {
+    framedContent,
+    frameLength: contentWidth + 2,
+  };
+}
+
+function buildUnicodeAnchorFrameTopLine(frameLength) {
+  const safeFrameLength = Number.isInteger(frameLength) ? Math.max(3, frameLength) : 3;
+  const innerWidth = Math.max(1, safeFrameLength - 2);
+  return `${BOX_DRAWING_TOP_LEFT}${BOX_DRAWING_HORIZONTAL.repeat(innerWidth)}${BOX_DRAWING_TOP_RIGHT}`;
+}
+
+function buildUnicodeAnchorFrameContentLine(framedContent) {
+  const safeContent = typeof framedContent === "string" ? framedContent : "";
+  return `${BOX_DRAWING_VERTICAL}${safeContent}${BOX_DRAWING_VERTICAL}`;
+}
+
+function buildUnicodeAnchorFrameBottomLine(frameLength) {
+  const safeFrameLength = Number.isInteger(frameLength) ? Math.max(3, frameLength) : 3;
+  const innerWidth = Math.max(1, safeFrameLength - 2);
+  return `${BOX_DRAWING_BOTTOM_LEFT}${BOX_DRAWING_HORIZONTAL.repeat(innerWidth)}${BOX_DRAWING_BOTTOM_RIGHT}`;
+}
+
+function convertUnicodeAnchorFrameLineToSixDot(lineValue, lineKind) {
+  const safeLine = typeof lineValue === "string" ? lineValue : "";
+
+  if (safeLine.length <= 0) {
+    return BRAILLE_TABLE_DELIMITER_CHARACTER;
   }
 
-  return framedLine;
-}
+  if (lineKind === "content") {
+    if (safeLine.length === 1) {
+      return BRAILLE_TABLE_DELIMITER_CHARACTER;
+    }
 
-function buildBrailleTableBorderLineFromFramedLine(framedLine, fillCharacter) {
-  const normalizedLine = typeof framedLine === "string" ? framedLine : "";
-  const lineLength = normalizedLine.length;
-  const safeFillCharacter =
-    typeof fillCharacter === "string" && fillCharacter.length > 0
-      ? fillCharacter
-      : BRAILLE_TABLE_ROW_SEPARATOR_FILL_CHARACTER;
+    return (
+      BRAILLE_TABLE_DELIMITER_CHARACTER +
+      safeLine.slice(1, -1) +
+      BRAILLE_TABLE_DELIMITER_CHARACTER
+    );
+  }
 
-  return safeFillCharacter.repeat(Math.max(1, lineLength));
-}
+  const borderFillCharacter =
+    lineKind === "top"
+      ? BRAILLE_FRAME_OPEN_CHARACTER
+      : BRAILLE_FRAME_CLOSE_CHARACTER;
 
-function buildBrailleTableStartLineFromFramedLine(framedLine) {
-  return buildBrailleTableBorderLineFromFramedLine(framedLine, BRAILLE_FRAME_OPEN_CHARACTER);
-}
+  if (safeLine.length === 1) {
+    return BRAILLE_TABLE_DELIMITER_CHARACTER;
+  }
 
-function buildBrailleTableEndLineFromFramedLine(framedLine) {
-  return buildBrailleTableBorderLineFromFramedLine(framedLine, BRAILLE_FRAME_CLOSE_CHARACTER);
+  return (
+    BRAILLE_TABLE_DELIMITER_CHARACTER +
+    borderFillCharacter.repeat(Math.max(0, safeLine.length - 2)) +
+    BRAILLE_TABLE_DELIMITER_CHARACTER
+  );
 }
 
 function applyAnchorFramesToBrailleText(outputText, lineFrameConfigs) {
@@ -685,16 +729,22 @@ function applyAnchorFramesToBrailleText(outputText, lineFrameConfigs) {
       lines.push("");
     }
 
-    const framedLine = applyAnchorFrameToBrailleLine(
+    const frameDescriptor = applyAnchorFrameToBrailleLine(
       lines[targetLineIndex],
       lineFrameConfig.minEndColumn,
     );
 
-    const startLine = buildBrailleTableStartLineFromFramedLine(framedLine);
-    const replacementLines = [startLine, framedLine];
+    const unicodeTopLine = buildUnicodeAnchorFrameTopLine(frameDescriptor.frameLength);
+    const unicodeContentLine = buildUnicodeAnchorFrameContentLine(frameDescriptor.framedContent);
+    const unicodeBottomLine = buildUnicodeAnchorFrameBottomLine(frameDescriptor.frameLength);
+
+    const replacementLines = [
+      convertUnicodeAnchorFrameLineToSixDot(unicodeTopLine, "top"),
+      convertUnicodeAnchorFrameLineToSixDot(unicodeContentLine, "content"),
+    ];
 
     if (lineFrameConfig.closeWithTableEndLine !== false) {
-      replacementLines.push(buildBrailleTableEndLineFromFramedLine(framedLine));
+      replacementLines.push(convertUnicodeAnchorFrameLineToSixDot(unicodeBottomLine, "bottom"));
     }
 
     if (targetLineIndex > 0 && lines[targetLineIndex - 1] !== "") {

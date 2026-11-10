@@ -1,10 +1,18 @@
 const path = require("node:path");
+const fs = require("node:fs/promises");
+const { fork } = require("node:child_process");
 const { app, BrowserWindow, Menu, ipcMain } = require("electron");
 const brailleService = require("./braille-service");
 const brlapiLinuxService = require("./brlapi-linux-service");
 const nvdaWindowsService = require("./nvda-windows-service");
 const gbsDocumentService = require("./gbs-document-service");
 const braillePrintService = require("./braille-print-service");
+
+const PRODUCTION_TRANSLATION_TIMEOUT_MS = 120000;
+const SEGFAULT_EXIT_CODE = 139;
+const SEGFAULT_SIGNAL = "SIGSEGV";
+const TRANSLATE_WORKER_PATH = path.join(__dirname, "braille-translate-worker.js");
+const TRANSLATION_LOG_FILE_NAME = "gbs-translation-errors.log";
 
 app.commandLine.appendSwitch("force-renderer-accessibility");
 if (
@@ -240,6 +248,215 @@ function buildApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    if (typeof error.message === "string" && error.message.trim().length > 0) {
+      return error.message;
+    }
+
+    return "erreur inconnue";
+  }
+
+  if (error && typeof error === "object" && typeof error.message === "string") {
+    const message = error.message.trim();
+    return message.length > 0 ? message : "erreur inconnue";
+  }
+
+  if (typeof error === "string") {
+    const message = error.trim();
+    return message.length > 0 ? message : "erreur inconnue";
+  }
+
+  if (error === null || error === undefined) {
+    return "erreur inconnue";
+  }
+
+  const normalized = String(error).trim();
+  if (normalized.length === 0 || normalized.toLowerCase() === "undefined" || normalized.toLowerCase() === "null") {
+    return "erreur inconnue";
+  }
+
+  return normalized;
+}
+
+function resolveTranslationLogPath() {
+  return path.join(app.getPath("userData"), TRANSLATION_LOG_FILE_NAME);
+}
+
+function truncateLogValue(value, maxLength = 20000) {
+  const textValue = typeof value === "string" ? value : String(value ?? "");
+  if (textValue.length <= maxLength) {
+    return textValue;
+  }
+
+  return `${textValue.slice(0, maxLength)}... [tronqué ${textValue.length - maxLength} caractères]`;
+}
+
+function sanitizeLogPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {
+      eventType: "unknown",
+      message: truncateLogValue(payload),
+    };
+  }
+
+  const normalizedPayload = {
+    ...payload,
+    eventType:
+      typeof payload.eventType === "string" && payload.eventType.trim().length > 0
+        ? payload.eventType.trim()
+        : "unknown",
+  };
+
+  if (typeof normalizedPayload.message === "string") {
+    normalizedPayload.message = truncateLogValue(normalizedPayload.message);
+  }
+
+  if (typeof normalizedPayload.errorMessage === "string") {
+    normalizedPayload.errorMessage = truncateLogValue(normalizedPayload.errorMessage);
+  }
+
+  if (typeof normalizedPayload.errorStack === "string") {
+    normalizedPayload.errorStack = truncateLogValue(normalizedPayload.errorStack, 40000);
+  }
+
+  return normalizedPayload;
+}
+
+async function appendTranslationLogEntry(payload) {
+  const logPath = resolveTranslationLogPath();
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    source: "renderer",
+    pid: process.pid,
+    platform: process.platform,
+    arch: process.arch,
+    appVersion: app.getVersion(),
+    ...sanitizeLogPayload(payload),
+  };
+
+  await fs.appendFile(logPath, `${JSON.stringify(logEntry)}\n`, "utf8");
+  return {
+    ok: true,
+    filePath: logPath,
+  };
+}
+
+function translateInIsolatedProcess(payload, timeoutMs = PRODUCTION_TRANSLATION_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const childProcess = fork(TRANSLATE_WORKER_PATH, {
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+
+    let settled = false;
+    const settle = (callback) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutId);
+      callback();
+    };
+
+    const timeoutId = setTimeout(() => {
+      settle(() => {
+        childProcess.kill("SIGKILL");
+        reject(new Error("La traduction a dépassé le délai autorisé."));
+      });
+    }, timeoutMs);
+
+    childProcess.once("message", (message) => {
+      settle(() => {
+        childProcess.kill();
+
+        if (!message || typeof message !== "object") {
+          reject(new Error("Réponse invalide du processus de traduction."));
+          return;
+        }
+
+        if (message.ok === true) {
+          resolve(message.result);
+          return;
+        }
+
+        const errorPayload = message.error && typeof message.error === "object"
+          ? message.error
+          : {};
+        reject(new Error(errorPayload.message || "Échec de la traduction isolée."));
+      });
+    });
+
+    childProcess.once("error", (error) => {
+      settle(() => {
+        reject(error);
+      });
+    });
+
+    childProcess.once("exit", (code, signal) => {
+      settle(() => {
+        if (signal === SEGFAULT_SIGNAL || code === SEGFAULT_EXIT_CODE) {
+          reject(new Error("Le moteur de traduction a rencontré une erreur de segmentation."));
+          return;
+        }
+
+        reject(
+          new Error(
+            `Le processus de traduction s'est arrêté de façon inattendue (code: ${code ?? "null"}, signal: ${signal ?? "null"}).`,
+          ),
+        );
+      });
+    });
+
+    childProcess.send({ type: "translate", payload });
+  });
+}
+
+function isProductionTranslationPayload(payload) {
+  return (
+    payload &&
+    typeof payload === "object" &&
+    payload.executionMode === "production"
+  );
+}
+
+async function translateWithRescueFallback(payload) {
+  if (!isProductionTranslationPayload(payload)) {
+    return brailleService.translate(payload);
+  }
+
+  try {
+    return await translateInIsolatedProcess(payload);
+  } catch (productionError) {
+    const productionReason = getErrorMessage(productionError);
+    const previewPayload = {
+      ...payload,
+      executionMode: "preview",
+    };
+
+    try {
+      const previewResult = await translateInIsolatedProcess(previewPayload);
+      const warningParts = [];
+      if (typeof previewResult?.warning === "string" && previewResult.warning.length > 0) {
+        warningParts.push(previewResult.warning);
+      }
+      warningParts.push(
+        `Le moteur de traduction de production a échoué (${productionReason}). Repli automatique vers la traduction preview.`,
+      );
+
+      return {
+        ...previewResult,
+        executionMode: "production",
+        warning: warningParts.join(" "),
+      };
+    } catch (previewError) {
+      throw new Error(
+        `Échec de traduction en production (${productionReason}). Le repli preview a aussi échoué: ${getErrorMessage(previewError)}.`,
+      );
+    }
+  }
+}
+
 function registerIpcHandlers() {
   const brailleDisplayService = getActiveBrailleDisplayService();
 
@@ -263,7 +480,9 @@ function registerIpcHandlers() {
   ipcMain.handle("braille:get-style-support", (_event, payload) =>
     brailleService.getStyleSupport(payload),
   );
-  ipcMain.handle("braille:translate", (_event, payload) => brailleService.translate(payload));
+  ipcMain.handle("braille:translate", async (_event, payload) =>
+    translateWithRescueFallback(payload),
+  );
   ipcMain.handle("gbs:save-document", async (event, payload) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
     return gbsDocumentService.saveDocument(payload, browserWindow ?? undefined);
@@ -295,6 +514,12 @@ function registerIpcHandlers() {
 
     setRealtimeTranslationMenuChecked(payload);
   });
+  ipcMain.handle("app:log-translation-event", async (_event, payload) =>
+    appendTranslationLogEntry(payload),
+  );
+  ipcMain.handle("app:get-translation-log-path", () => ({
+    filePath: resolveTranslationLogPath(),
+  }));
 }
 
 app

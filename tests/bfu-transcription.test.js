@@ -97,13 +97,20 @@ test("maps typographic apostrophes to braille apostrophe (dot 3)", () => {
   }
 });
 
-test("uses CBFU horizontal opening and closing lines for <anc>", () => {
+test("uses CBFU opening/closing lines with side borders for <anc>", () => {
   const result = translate("<anc>exemple");
   const [openingLine, contentLine, closingLine] = result.outputText.split("\n");
 
-  assert.equal(openingLine, "⠶".repeat(contentLine.length));
-  assert.equal(closingLine, "⠛".repeat(contentLine.length));
-  assert.equal(contentLine.includes("⠿"), false);
+  assert.ok(openingLine.startsWith("⠿"));
+  assert.ok(openingLine.endsWith("⠿"));
+  assert.equal(openingLine.slice(1, -1), "⠶".repeat(Math.max(0, openingLine.length - 2)));
+
+  assert.ok(contentLine.startsWith("⠿"));
+  assert.ok(contentLine.endsWith("⠿"));
+
+  assert.ok(closingLine.startsWith("⠿"));
+  assert.ok(closingLine.endsWith("⠿"));
+  assert.equal(closingLine.slice(1, -1), "⠛".repeat(Math.max(0, closingLine.length - 2)));
 });
 
 test("sets the requested minimum width for <anc#>", () => {
@@ -113,6 +120,8 @@ test("sets the requested minimum width for <anc#>", () => {
   assert.equal(contentLine.length, 13);
   assert.equal(openingLine.length, contentLine.length);
   assert.equal(closingLine.length, contentLine.length);
+  assert.ok(contentLine.startsWith("⠿"));
+  assert.ok(contentLine.endsWith("⠿"));
 });
 
 test("semantic heading tags are removed from preview while keeping their text", () => {
@@ -145,8 +154,8 @@ test("separates an inline <anc> frame from surrounding text", () => {
   const lines = result.outputText.split("\n");
 
   assert.equal(lines[1], "");
-  assert.ok(lines[2].startsWith("⠶"));
-  assert.ok(lines[4].startsWith("⠛"));
+  assert.ok(lines[2].startsWith("⠿⠶"));
+  assert.ok(lines[4].startsWith("⠿⠛"));
   assert.equal(lines[5], "");
 });
 

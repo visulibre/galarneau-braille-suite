@@ -576,6 +576,25 @@ function collectForcedPageBreakLineNumbers(lines) {
   return forcedPageBreakLineNumbers;
 }
 
+function collectAnchorFrameLineNumbers(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return [];
+  }
+
+  const anchorFrameLineNumbers = [];
+  lines.forEach((lineValue, lineIndex) => {
+    if (typeof lineValue !== "string") {
+      return;
+    }
+
+    if (/\s*<anc(?:\s*\d{1,3})?>/iu.test(lineValue)) {
+      anchorFrameLineNumbers.push(lineIndex + 1);
+    }
+  });
+
+  return anchorFrameLineNumbers;
+}
+
 function normalizeSpreadsheetCellValue(cellValue) {
   if (cellValue === null || cellValue === undefined) {
     return "";
@@ -663,7 +682,48 @@ function buildSpreadsheetColumnWidths(normalizedRows) {
   return columnWidths;
 }
 
-function buildBrailleTableContentLine(cellValues, columnWidths) {
+function fitSpreadsheetColumnWidthsToLineLength(columnWidths, targetLineLength) {
+  const safeColumnWidths = Array.isArray(columnWidths)
+    ? columnWidths.map((columnWidth) =>
+      Number.isInteger(columnWidth) ? Math.max(1, columnWidth) : 1,
+    )
+    : [];
+  if (safeColumnWidths.length === 0) {
+    return [];
+  }
+
+  if (!Number.isInteger(targetLineLength) || targetLineLength < 2) {
+    return safeColumnWidths;
+  }
+
+  const minimumLineLength = safeColumnWidths.length + 1;
+  if (targetLineLength < minimumLineLength) {
+    return safeColumnWidths;
+  }
+
+  const availableContentWidth = targetLineLength - minimumLineLength;
+  const currentContentWidth = safeColumnWidths.reduce(
+    (totalWidth, columnWidth) => totalWidth + columnWidth,
+    0,
+  );
+  if (currentContentWidth >= availableContentWidth) {
+    return safeColumnWidths;
+  }
+
+  const expandedColumnWidths = safeColumnWidths.slice();
+  let remainingWidth = availableContentWidth - currentContentWidth;
+  let columnIndex = 0;
+
+  while (remainingWidth > 0) {
+    expandedColumnWidths[columnIndex] += 1;
+    columnIndex = (columnIndex + 1) % expandedColumnWidths.length;
+    remainingWidth -= 1;
+  }
+
+  return expandedColumnWidths;
+}
+
+function buildBrailleTableContentLine(cellValues, columnWidths, targetLineLength = null) {
   const normalizedCells = Array.isArray(cellValues)
     ? cellValues.map((cellValue) => normalizeSpreadsheetCellValue(cellValue))
     : [];
@@ -684,10 +744,19 @@ function buildBrailleTableContentLine(cellValues, columnWidths) {
     return `${BRAILLE_TABLE_DELIMITER_CHARACTER}${safeCellValue.padEnd(safeColumnWidths[columnIndex], " ")}`;
   });
 
-  return tableSegments.join("");
+  let outputLine = `${tableSegments.join("")}${BRAILLE_TABLE_DELIMITER_CHARACTER}`;
+
+  if (Number.isInteger(targetLineLength) && targetLineLength > outputLine.length) {
+    outputLine =
+      `${outputLine.slice(0, -1)}` +
+      `${" ".repeat(targetLineLength - outputLine.length)}` +
+      `${BRAILLE_TABLE_DELIMITER_CHARACTER}`;
+  }
+
+  return outputLine;
 }
 
-function buildBrailleTableLinesFromRows(rowValues) {
+function buildBrailleTableLinesFromRows(rowValues, targetLineLength = null) {
   const normalizedRows = (Array.isArray(rowValues) ? rowValues : [])
     .map((rowValue) => normalizeSpreadsheetRow(rowValue))
     .filter(
@@ -706,9 +775,22 @@ function buildBrailleTableLinesFromRows(rowValues) {
     return [];
   }
 
+  const safeTargetLineLength =
+    Number.isInteger(targetLineLength) && targetLineLength >= 2
+      ? targetLineLength
+      : null;
+  const resolvedColumnWidths = fitSpreadsheetColumnWidthsToLineLength(
+    columnWidths,
+    safeTargetLineLength,
+  );
+
   const headerRow = normalizedRows[0];
   const bodyRows = normalizedRows.slice(1);
-  const headerLine = buildBrailleTableContentLine(headerRow, columnWidths);
+  const headerLine = buildBrailleTableContentLine(
+    headerRow,
+    resolvedColumnWidths,
+    safeTargetLineLength,
+  );
   const tableLineLength = Math.max(1, headerLine.length);
 
   const tableLines = [
@@ -718,7 +800,9 @@ function buildBrailleTableLinesFromRows(rowValues) {
   ];
 
   bodyRows.forEach((rowValue) => {
-    tableLines.push(buildBrailleTableContentLine(rowValue, columnWidths));
+    tableLines.push(
+      buildBrailleTableContentLine(rowValue, resolvedColumnWidths, safeTargetLineLength),
+    );
   });
 
   tableLines.push(
@@ -728,8 +812,8 @@ function buildBrailleTableLinesFromRows(rowValues) {
   return tableLines;
 }
 
-function buildBrailleTableTextFromRows(rowValues) {
-  return buildBrailleTableLinesFromRows(rowValues).join("\n");
+function buildBrailleTableTextFromRows(rowValues, targetLineLength = null) {
+  return buildBrailleTableLinesFromRows(rowValues, targetLineLength).join("\n");
 }
 
 function appendBrailleTableLinesWithPageNumberGuards(documentLines, tableLines, linesPerPage) {
@@ -1447,6 +1531,58 @@ function extractDocxParagraphCenterFromProperties(paragraphPropertiesXml) {
   );
 }
 
+function isDocxBorderTagEnabled(borderTagXml) {
+  if (typeof borderTagXml !== "string" || borderTagXml.length === 0) {
+    return false;
+  }
+
+  const borderValue = readXmlAttributeValue(borderTagXml, "w:val");
+  if (borderValue === null) {
+    return true;
+  }
+
+  const normalizedValue = borderValue.trim().toLowerCase();
+  if (normalizedValue.length === 0) {
+    return true;
+  }
+
+  return normalizedValue !== "none" && normalizedValue !== "nil";
+}
+
+function extractDocxParagraphFrameFromProperties(paragraphPropertiesXml) {
+  if (typeof paragraphPropertiesXml !== "string" || paragraphPropertiesXml.length === 0) {
+    return null;
+  }
+
+  const borderBlockMatch = paragraphPropertiesXml.match(/<w:pBdr\b[\s\S]*?<\/w:pBdr>/iu);
+  if (!borderBlockMatch) {
+    return null;
+  }
+
+  const borderBySide = {
+    top: false,
+    bottom: false,
+    left: false,
+    right: false,
+  };
+
+  const borderSideMatcher = /<w:(top|bottom|left|right)\b[^>]*\/?>(?:<\/w:\1>)?/giu;
+  let borderSideMatch;
+  while ((borderSideMatch = borderSideMatcher.exec(borderBlockMatch[0])) !== null) {
+    const side = borderSideMatch[1]?.toLowerCase();
+    if (!side || !Object.hasOwn(borderBySide, side)) {
+      continue;
+    }
+
+    borderBySide[side] = isDocxBorderTagEnabled(borderSideMatch[0]);
+  }
+
+  return {
+    hasAnyBorder: Object.values(borderBySide).some((enabled) => enabled === true),
+    ...borderBySide,
+  };
+}
+
 function buildDocxParagraphCenterStyleMap(stylesXmlContent) {
   if (typeof stylesXmlContent !== "string" || stylesXmlContent.length === 0) {
     return new Map();
@@ -1513,6 +1649,74 @@ function buildDocxParagraphCenterStyleMap(stylesXmlContent) {
   return resolvedCenterByStyleId;
 }
 
+function buildDocxParagraphFrameStyleMap(stylesXmlContent) {
+  if (typeof stylesXmlContent !== "string" || stylesXmlContent.length === 0) {
+    return new Map();
+  }
+
+  const styleDefinitionById = new Map();
+  const styleMatcher = /<w:style\b([^>]*)>([\s\S]*?)<\/w:style>/giu;
+  let styleMatch;
+  while ((styleMatch = styleMatcher.exec(stylesXmlContent)) !== null) {
+    const styleAttributes = styleMatch[1] ?? "";
+    const styleBody = styleMatch[2] ?? "";
+    const styleType = readXmlAttributeValue(styleAttributes, "w:type");
+    const styleId = readXmlAttributeValue(styleAttributes, "w:styleId");
+
+    if (styleType !== "paragraph" || !styleId) {
+      continue;
+    }
+
+    const basedOnMatch = styleBody.match(/<w:basedOn\b[^>]*\/?>(?:<\/w:basedOn>)?/iu);
+    const paragraphPropertiesMatch = styleBody.match(/<w:pPr\b[\s\S]*?<\/w:pPr>/iu);
+    const paragraphFrame = paragraphPropertiesMatch
+      ? extractDocxParagraphFrameFromProperties(paragraphPropertiesMatch[0])
+      : null;
+
+    styleDefinitionById.set(styleId, {
+      basedOnStyleId: basedOnMatch ? readXmlAttributeValue(basedOnMatch[0], "w:val") : null,
+      ownParagraphFramed: paragraphFrame ? paragraphFrame.hasAnyBorder : null,
+    });
+  }
+
+  const resolvedFrameByStyleId = new Map();
+  const resolveStyleFrame = (styleId, resolvingIds = new Set()) => {
+    if (resolvedFrameByStyleId.has(styleId)) {
+      return resolvedFrameByStyleId.get(styleId);
+    }
+
+    if (resolvingIds.has(styleId)) {
+      return null;
+    }
+
+    const styleDefinition = styleDefinitionById.get(styleId);
+    if (!styleDefinition) {
+      return null;
+    }
+
+    resolvingIds.add(styleId);
+
+    let resolvedFramed = null;
+    if (styleDefinition.basedOnStyleId && styleDefinitionById.has(styleDefinition.basedOnStyleId)) {
+      resolvedFramed = resolveStyleFrame(styleDefinition.basedOnStyleId, resolvingIds);
+    }
+
+    if (typeof styleDefinition.ownParagraphFramed === "boolean") {
+      resolvedFramed = styleDefinition.ownParagraphFramed;
+    }
+
+    resolvingIds.delete(styleId);
+    resolvedFrameByStyleId.set(styleId, resolvedFramed);
+    return resolvedFramed;
+  };
+
+  styleDefinitionById.forEach((_definition, styleId) => {
+    resolveStyleFrame(styleId);
+  });
+
+  return resolvedFrameByStyleId;
+}
+
 function isDocxParagraphCentered(paragraphXml, paragraphCenterByStyleId = null) {
   if (typeof paragraphXml !== "string" || paragraphXml.length === 0) {
     return false;
@@ -1540,6 +1744,39 @@ function isDocxParagraphCentered(paragraphXml, paragraphCenterByStyleId = null) 
     const paragraphStyleId = readXmlAttributeValue(paragraphStyleMatch[0], "w:val");
     return paragraphStyleId
       ? paragraphCenterByStyleId.get(paragraphStyleId) === true
+      : false;
+  }
+
+  return false;
+}
+
+function isDocxParagraphFramed(paragraphXml, paragraphFrameByStyleId = null) {
+  if (typeof paragraphXml !== "string" || paragraphXml.length === 0) {
+    return false;
+  }
+
+  const paragraphPropertiesMatch = paragraphXml.match(/<w:pPr\b[\s\S]*?<\/w:pPr>/iu);
+  if (!paragraphPropertiesMatch) {
+    return false;
+  }
+
+  const paragraphProperties = paragraphPropertiesMatch[0];
+  const directParagraphFrame = extractDocxParagraphFrameFromProperties(paragraphProperties);
+  if (directParagraphFrame !== null) {
+    return directParagraphFrame.hasAnyBorder;
+  }
+
+  if (paragraphFrameByStyleId instanceof Map) {
+    const paragraphStyleMatch = paragraphProperties.match(
+      /<w:pStyle\b[^>]*\/?>(?:<\/w:pStyle>)?/iu,
+    );
+    if (!paragraphStyleMatch) {
+      return false;
+    }
+
+    const paragraphStyleId = readXmlAttributeValue(paragraphStyleMatch[0], "w:val");
+    return paragraphStyleId
+      ? paragraphFrameByStyleId.get(paragraphStyleId) === true
       : false;
   }
 
@@ -1661,26 +1898,79 @@ function isDocxParagraphLikelyCenteredHeading(paragraphXml, paragraphText) {
   return runDescriptors.every((runDescriptor) => runDescriptor.style.bold === true);
 }
 
-function extractDocxTextFromXml(xmlContent, paragraphCenterByStyleId = null) {
+function markTextLinesAsAnchored(inputText) {
+  if (typeof inputText !== "string" || inputText.length === 0) {
+    return "";
+  }
+
+  return inputText
+    .split("\n")
+    .map((lineValue) => {
+      let markersPrefix = "";
+      let normalizedLineValue = lineValue;
+
+      while (normalizedLineValue.startsWith(IMPORT_CENTERED_LINE_MARKER)) {
+        markersPrefix += IMPORT_CENTERED_LINE_MARKER;
+        normalizedLineValue = normalizedLineValue.slice(IMPORT_CENTERED_LINE_MARKER.length);
+      }
+
+      if (!/[^\s]/u.test(normalizedLineValue)) {
+        return lineValue;
+      }
+
+      if (/^\s*<anc(?:\s*\d{1,3})?>/iu.test(normalizedLineValue)) {
+        return `${markersPrefix}${normalizedLineValue}`;
+      }
+
+      return `${markersPrefix}<anc>${normalizedLineValue}`;
+    })
+    .join("\n");
+}
+
+function extractDocxTextFromXml(
+  xmlContent,
+  paragraphCenterByStyleId = null,
+  paragraphFrameByStyleId = null,
+  extractionMetadataCollector = null,
+) {
   if (typeof xmlContent !== "string" || xmlContent.length === 0) {
     return "";
   }
 
   const paragraphs = [];
+  const framedParagraphNumbers = [];
   const paragraphMatcher = /<w:p\b[\s\S]*?<\/w:p>/giu;
   let paragraphMatch;
+  let paragraphNumber = 0;
 
   while ((paragraphMatch = paragraphMatcher.exec(xmlContent)) !== null) {
+    paragraphNumber += 1;
     const paragraphXml = paragraphMatch[0];
     const paragraphText = extractDocxParagraphText(paragraphXml);
     const shouldCenterParagraph =
       isDocxParagraphCentered(paragraphXml, paragraphCenterByStyleId) ||
       isDocxParagraphLikelyCenteredHeading(paragraphXml, paragraphText);
-    paragraphs.push(
-      shouldCenterParagraph
-        ? markTextLinesAsCentered(paragraphText)
-        : paragraphText,
-    );
+    const shouldFrameParagraph = isDocxParagraphFramed(paragraphXml, paragraphFrameByStyleId);
+
+    let importedParagraphText = shouldCenterParagraph
+      ? markTextLinesAsCentered(paragraphText)
+      : paragraphText;
+    if (shouldFrameParagraph && /[^\s]/u.test(paragraphText)) {
+      importedParagraphText = markTextLinesAsAnchored(importedParagraphText);
+      framedParagraphNumbers.push(paragraphNumber);
+    }
+
+    paragraphs.push(importedParagraphText);
+  }
+
+  if (
+    extractionMetadataCollector &&
+    typeof extractionMetadataCollector === "object" &&
+    !Array.isArray(extractionMetadataCollector)
+  ) {
+    extractionMetadataCollector.detectedFramedParagraphNumbers =
+      framedParagraphNumbers.slice();
+    extractionMetadataCollector.detectedFramedParagraphCount = framedParagraphNumbers.length;
   }
 
   if (paragraphs.length > 0) {
@@ -2103,18 +2393,28 @@ async function extractDocxImportPayload(filePath) {
   }
 
   let paragraphCenterByStyleId = new Map();
+  let paragraphFrameByStyleId = new Map();
   const stylesEntry = archive.file("word/styles.xml");
   if (stylesEntry) {
     const stylesXmlContent = await stylesEntry.async("string");
     paragraphCenterByStyleId = buildDocxParagraphCenterStyleMap(stylesXmlContent);
+    paragraphFrameByStyleId = buildDocxParagraphFrameStyleMap(stylesXmlContent);
   }
 
+  const extractionMetadata = {
+    declaredPageCount,
+    detectedFramedParagraphNumbers: [],
+    detectedFramedParagraphCount: 0,
+  };
   const xmlContent = await documentEntry.async("string");
   return {
-    text: extractDocxTextFromXml(xmlContent, paragraphCenterByStyleId),
-    metadata: {
-      declaredPageCount,
-    },
+    text: extractDocxTextFromXml(
+      xmlContent,
+      paragraphCenterByStyleId,
+      paragraphFrameByStyleId,
+      extractionMetadata,
+    ),
+    metadata: extractionMetadata,
   };
 }
 
@@ -2193,6 +2493,12 @@ async function extractTextFromSpreadsheetFile(filePath, importOptions = null) {
     1,
     60,
   );
+  const charactersPerLine = clampBoundedInteger(
+    importOptions?.charactersPerLine,
+    DEFAULT_IMPORT_OPTIONS.charactersPerLine,
+    1,
+    120,
+  );
   const hasMultipleSheets = sheetNames.length > 1;
   const outputLines = [];
 
@@ -2208,7 +2514,7 @@ async function extractTextFromSpreadsheetFile(filePath, importOptions = null) {
       defval: "",
       blankrows: false,
     });
-    const tableLines = buildBrailleTableLinesFromRows(sheetRows);
+    const tableLines = buildBrailleTableLinesFromRows(sheetRows, charactersPerLine);
     if (tableLines.length === 0) {
       return;
     }
@@ -2281,6 +2587,7 @@ function buildImportedDocumentFromText(inputText, importOptions, importMetadataC
 
   const lines = centeredText.split("\n");
   const forcedPageBreakLineNumbers = collectForcedPageBreakLineNumbers(lines);
+  const anchorFrameLineNumbers = collectAnchorFrameLineNumbers(lines);
 
   if (
     importMetadataCollector &&
@@ -2289,6 +2596,8 @@ function buildImportedDocumentFromText(inputText, importOptions, importMetadataC
   ) {
     importMetadataCollector.forcedPageBreakLineNumbers = forcedPageBreakLineNumbers;
     importMetadataCollector.forcedPageBreakCount = forcedPageBreakLineNumbers.length;
+    importMetadataCollector.anchorFrameLineNumbers = anchorFrameLineNumbers;
+    importMetadataCollector.anchorFrameCount = anchorFrameLineNumbers.length;
   }
 
   const pages = buildPagesFromLines(lines, importOptions.linesPerPage);
@@ -2335,6 +2644,20 @@ function buildDocxImportMetadata(docxExtractionMetadata, importBuildMetadata) {
       : declaredPageCount !== null
         ? "doc-properties"
         : "unknown";
+  const sourceFrameParagraphNumbers = Array.isArray(docxExtractionMetadata?.detectedFramedParagraphNumbers)
+    ? docxExtractionMetadata.detectedFramedParagraphNumbers.slice()
+    : [];
+  const detectedFramedParagraphCount =
+    Number.isInteger(docxExtractionMetadata?.detectedFramedParagraphCount)
+      ? docxExtractionMetadata.detectedFramedParagraphCount
+      : sourceFrameParagraphNumbers.length;
+  const sourceAnchorFrameLineNumbers = Array.isArray(importBuildMetadata?.anchorFrameLineNumbers)
+    ? importBuildMetadata.anchorFrameLineNumbers.slice()
+    : [];
+  const detectedAnchorFrameCount =
+    Number.isInteger(importBuildMetadata?.anchorFrameCount)
+      ? importBuildMetadata.anchorFrameCount
+      : sourceAnchorFrameLineNumbers.length;
 
   return {
     sourceType: "docx",
@@ -2345,6 +2668,11 @@ function buildDocxImportMetadata(docxExtractionMetadata, importBuildMetadata) {
     detectedPageBreakCount,
     sourcePageEndMarkerLineNumbers,
     pageBreakMarker: IMPORT_FORCED_PAGE_BREAK_MARKER,
+    detectedFramedParagraphCount,
+    sourceFrameParagraphNumbers,
+    detectedAnchorFrameCount,
+    sourceAnchorFrameLineNumbers,
+    anchorMarker: "<anc>",
   };
 }
 

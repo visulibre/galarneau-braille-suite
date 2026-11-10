@@ -93,9 +93,9 @@
   (`printPages`, `braillePages`, `contents`, etc.) pour appliquer la pagination
   et la table des matières côté moteur de production.
 - Raccourci `Ctrl/Cmd+Entrée` en document normal (`.gnp`) : insertion d'un
-  saut de page forcé enregistré dans le document, pris en charge en preview et
-  en traduction complète via segmentation (jointure par `\f`) pour imposer la
-  rupture de page braille/imprimée.
+  saut de page imprimée forcé enregistré dans le document, pris en charge en
+  preview et en traduction complète ; la pagination braille est recalculée en
+  continu pour réutiliser les lignes restantes de la page braille en cours.
 - Ouverture étendue des fichiers: support natif `.gnp`/`.gnb`/`.gbs` conservé,
   avec import texte de documents externes `.doc`, `.docx`, `.odt`, `.odf`,
   `.xls`, `.xlsx`, `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown` convertis
@@ -104,6 +104,11 @@
   avec delimiteurs braille (`points 1-2-3-4-5-6`) et lignes de structure
   conformes a la demande utilisateur (bord haut, ligne d'entete, separateur,
   lignes de contenu, bord de fin).
+- Conversion des tableaux Unicode "box drawing" (`U+2500..U+257F`) vers une
+  structure braille 6 points avant traduction texte->braille:
+  - conservation de la compatibilite BRF (pas de cellules 7/8 points) ;
+  - fermeture forcee des lignes de tableau au dernier caractere disponible
+    (`charactersPerLine`, ex. colonne 29) quand la largeur le permet.
 - Edition de tableaux braille importes: les delimiteurs `points 1-2-3-4-5-6`
   sont proteges (non effacables), et la navigation horizontale du curseur
   saute de cellule en cellule en se positionnant juste apres chaque delimiteur.
@@ -135,6 +140,9 @@
 - Import enrichi de l'alignement: conservation du centrage de paragraphes
   sur `.docx`, `.odt/.odf` et `.rtf`, converti en centrage effectif des
   lignes importees selon la largeur (`charactersPerLine`) du document cible.
+- Import DOCX enrichi des encadres: detection des paragraphes avec bordures
+  Word et marquage automatique en balise `<anc>` dans le document importe,
+  avec metadonnees de comptage/positions des encadres detectes.
 - Affichage braille externe enrichi (optionnel):
   - Linux via BRLAPI ;
   - Windows via NVDA Controller Client (`nvdaControllerClient64.dll` et
@@ -211,8 +219,9 @@
   2 cellules braille sur la ligne courante uniquement (équivalent imprimé:
   5 caractères), sans persistance sur la ligne suivante.
 - Balise d'encadré ponctuelle (`<anc>` / `<anc#>`): filets horizontaux CBFU
-  ouvrant (`points 2-3-5-6`) et fermant (`points 1-2-4-5`), sans bordures
-  latérales, avec une ligne vide avant/après si du texte voisin existe;
+  ouvrant (`points 2-3-5-6`) et fermant (`points 1-2-4-5`) avec bordures
+  latérales (`points 1-2-3-4-5-6`) en style boite 6 points, avec une ligne
+  vide avant/après si du texte voisin existe;
   `<anc#>` fixe une largeur minimale commune au contenu et aux filets.
 - Persistance compressee des documents natifs: les fichiers `.gnp` et `.gnb`
   sont stockes compresses (niveau maximal) et decompressees en memoire a
@@ -268,6 +277,46 @@
   - la documentation si nécessaire.
 
 ## Historique des dernières décisions
+
+- 2026-11-09 : detection des encadres DOCX a l'import:
+  - detection des bordures de paragraphe DOCX (`w:pBdr`) en direct et via
+    styles herites ;
+  - conversion automatique des paragraphes detectes en lignes marquees `<anc>`
+    lors de l'import ;
+  - remontée des metadonnees d'encadres detectes (paragraphes source et lignes
+    marquees) dans la reponse d'ouverture ;
+  - message de statut ajoute dans le renderer pour confirmer le nombre
+    d'encadres detectes a l'import DOCX.
+  Fichiers touches: `src/main/gbs-document-service.js`, `src/renderer/app.js`,
+  `tests/docx-import.test.js`, `README.md`, `.github/project-memory.md`.
+
+- 2026-11-09 : conversion boxes + fermeture de ligne de tableau en fin de largeur:
+  - conversion automatique des caracteres Unicode de contour de tableau
+    (`U+2500..U+257F`) vers les contours braille 6 points avant chaque
+    traduction texte->braille (preview et production) ;
+  - lignes de contenu tableau fermees explicitement par un delimiteur de fin ;
+  - alignement du calcul des largeurs de colonnes pour forcer, quand possible,
+    un caractere de fin de boite en derniere colonne (`charactersPerLine`) ;
+  - import Excel (`.xls/.xlsx`) aligne sur la meme regle de fermeture.
+  - validation automatisée explicite de la fermeture au dernier caractère pour
+    des largeurs cibles 29 et 40.
+  Fichiers touches: `src/renderer/app.js`, `src/renderer/braille-table-layout.js`,
+  `src/main/gbs-document-service.js`, `tests/braille-table-layout.test.js`,
+  `tests/spreadsheet-table-layout.test.js`, `README.md`,
+  `.github/project-memory.md`.
+  Reste a faire: valider en usage reel sur DOCX/tableaux complexes et ajuster
+  la repartition des colonnes si necessaire.
+
+- 2026-11-09 : encadres `<anc>` passes en style boite 6 points (modele boxes):
+  - construction interne d'une boite Unicode (haut, cotes, bas), puis
+    conversion en rendu braille 6 points pour rester compatible BRF ;
+  - le contenu encadre est desormais borne par des delimiteurs lateraux
+    `points 1-2-3-4-5-6` ;
+  - les filets haut/bas conservent la distinction CBFU (`2-3-5-6` puis
+    `1-2-4-5`).
+  Fichiers touches: `src/main/braille-service.js`,
+  `tests/bfu-transcription.test.js`, `README.md`,
+  `.github/project-memory.md`.
 
 - 2026-11-04 : ajout de l'impression des documents braille:
   - bouton et commande **Fichier > Envoyer le BRF à l'embosseuse**;
@@ -509,6 +558,49 @@
     signaler les limites possibles de formatage.
   Fichiers touches: `src/main/gbs-document-service.js`,
   `src/renderer/app.js`, `.github/project-memory.md`.
+
+- 2026-11-09 : correction de la fin de page imprimée sur les sauts forcés
+  `Ctrl/Cmd+Entrée`:
+  - traduction des segments sans pagination visuelle, puis pagination globale
+    continue côté renderer ;
+  - une fin de page imprimée n'impose plus un saut de page braille, les lignes
+    restantes de la page braille active sont réutilisées ;
+  - les lignes blanches terminales d'une page imprimée (avant `Ctrl/Cmd+Entrée`)
+    sont retirées avant pagination pour insérer immédiatement le séparateur de
+    la page imprimée suivante ;
+  - repli de secours ajouté: si une traduction de production échoue sur un
+    segment (ex. plantage liblouis), tentative automatique en mode preview
+    pour terminer la traduction au lieu d'arrêter le flux ;
+  - message de confirmation utilisateur et README alignés avec ce comportement.
+  Fichiers touchés: `src/renderer/app.js`, `README.md`,
+  `.github/project-memory.md`.
+  Reste à faire ensuite: ajouter un test automatisé côté renderer pour couvrir
+  ce scénario de pagination continue.
+
+- 2026-11-09 : mitigation des erreurs de segmentation au lancement de la
+  traduction:
+  - les requêtes de traduction en mode production passent maintenant dans un
+    processus enfant isolé ; un crash natif n'abat plus le processus principal
+    Electron ;
+  - en cas d'échec production, tentative automatique d'un repli preview dans
+    le même mode isolé, avec message d'avertissement explicite ;
+  - normalisation des messages d'erreur côté main pour éviter les retours
+    textuels `undefined`/`null` quand la source de l'erreur est incomplète ;
+  - journalisation persistante des erreurs de traduction Ctrl/Cmd+T dans un
+    fichier local (`gbs-translation-errors.log`) via IPC main/preload, avec
+    contexte de document et détails d'erreur pour analyse a posteriori ;
+  - correctif renderer appliqué après lecture du log: remplacement de la
+    référence invalide `segmentNativeFormatting` par
+    `segmentNativeFormattingBase` dans la traduction segmentée, ce qui supprime
+    l'erreur `ReferenceError: segmentNativeFormatting is not defined` au
+    Ctrl/Cmd+T ;
+  - les traductions preview restent directes pour conserver la réactivité en
+    saisie.
+  Fichiers touchés: `src/main/main.js`, `src/main/preload.js`,
+  `src/main/braille-translate-worker.js`, `src/renderer/app.js`,
+  `.github/project-memory.md`.
+  Reste à faire ensuite: ajouter un test d'intégration IPC pour valider le
+  comportement quand le worker se termine anormalement.
 
 - 2026-10-29 : ajout de la prise en charge du centrage a l'import externe:
   - `.docx`: detection du centrage de paragraphe via `w:jc` direct et via

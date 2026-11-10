@@ -26,3 +26,17 @@ test("ignores trailing layout spaces when computing column widths", () => {
     [3, 2],
   );
 });
+
+test("expands column widths to close the table on the target line length", () => {
+  assert.deepEqual(
+    brailleTableLayout.fitColumnWidthsToLineLength([3, 2], 12),
+    [5, 4],
+  );
+});
+
+test("does not shrink columns when content already exceeds target width", () => {
+  assert.deepEqual(
+    brailleTableLayout.fitColumnWidthsToLineLength([6, 6], 12),
+    [6, 6],
+  );
+});

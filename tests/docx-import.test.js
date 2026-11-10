@@ -151,6 +151,62 @@ test("docx import preserves explicit page breaks and maps them to forced page br
   ]);
 });
 
+test("docx import detects paragraph borders and marks framed text with <anc>", () => {
+  const { extractDocxTextFromXml } = loadDocxExtractor();
+  const xmlContent =
+    "<w:document><w:body>" +
+    "<w:p>" +
+    "<w:pPr><w:pBdr>" +
+    '<w:top w:val="single"/><w:left w:val="single"/>' +
+    '<w:bottom w:val="single"/><w:right w:val="single"/>' +
+    "</w:pBdr></w:pPr>" +
+    "<w:r><w:t>Bloc encadre</w:t></w:r>" +
+    "</w:p>" +
+    "<w:p><w:r><w:t>Texte normal</w:t></w:r></w:p>" +
+    "</w:body></w:document>";
+
+  const outputText = extractDocxTextFromXml(xmlContent);
+  const outputLines = outputText.split("\n");
+
+  assert.equal(outputLines[0], "<anc>Bloc encadre");
+  assert.equal(outputLines[1], "Texte normal");
+});
+
+test("docx import metadata collector keeps line numbers for generated <anc> markers", () => {
+  const { buildImportedDocumentFromText } = loadDocxExtractor();
+  const importMetadata = {};
+
+  buildImportedDocumentFromText(
+    "<anc>Bloc encadre\nTexte normal",
+    {
+      table: "fr-bfu-g2.ctb",
+      tableLabel: "Francais BFU grade 2",
+      linesPerPage: 25,
+      charactersPerLine: 40,
+      pageLayout: {
+        printPages: true,
+        braillePages: true,
+        numberBraillePages: true,
+        continuePages: true,
+        pageSeparator: true,
+        pageSeparatorNumber: true,
+        printPageNumberAt: "top",
+        braillePageNumberAt: "bottom",
+        beginningPageNumber: 1,
+        contents: false,
+        printPageNumbersInContents: true,
+        braillePageNumbersInContents: true,
+        splitIntoVolumes: false,
+        pagesPerVolume: 120,
+      },
+    },
+    importMetadata,
+  );
+
+  assert.equal(importMetadata.anchorFrameCount, 1);
+  assert.deepEqual(importMetadata.anchorFrameLineNumbers, [1]);
+});
+
 test("docx import reads declared page count from Word app metadata", () => {
   const { extractDocxDeclaredPageCountFromAppXml } = loadDocxExtractor();
   const appXmlContent =

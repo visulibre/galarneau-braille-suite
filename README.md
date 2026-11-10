@@ -307,7 +307,9 @@ Le binaire non empaqueté est aussi disponible ici :
    d’édition (mode de saisie, espaces, traduction, etc.).
    Utilise `Entrée` pour couper la ligne active à la position du curseur (le
    texte après curseur passe à la ligne suivante) et `Ctrl/Cmd + Entrée` pour
-   insérer un saut de page forcé (document normal `.gnp`).
+   insérer un saut de page imprimée forcé (document normal `.gnp`).
+   La pagination braille continue sur la page en cours tant qu’il reste des
+   lignes disponibles.
 15. Si le document actif est un `.gnp` et que la traduction va vers le braille :
    - l’éditeur bascule automatiquement sur le contenu braille (le texte imprimé n’est plus la base d’édition active) ;
    - le contenu est redimensionné selon les paramètres braille choisis (caractères/ligne et lignes/page) ;
@@ -420,9 +422,12 @@ Notes:
 Tu peux utiliser la balise `&lt;anc&gt;` pour encadrer la ligne courante avec les
 filets horizontaux du CBFU :
 
-- `&lt;anc&gt;` ajoute un filet ouvrant `points 2-3-5-6`, le contenu sans bordures
-   latérales, puis un filet fermant `points 1-2-4-5`; l’encadré est isolé du
-   texte voisin par une ligne vide ;
+- `&lt;anc&gt;` construit un encadré style "boîte" (modèle boxes), puis le convertit
+  en rendu braille 6 points compatible BRF:
+  - ligne haute: `points 2-3-5-6` entre deux délimiteurs `points 1-2-3-4-5-6` ;
+  - ligne de contenu: délimiteur `points 1-2-3-4-5-6` au début et à la fin ;
+  - ligne basse: `points 1-2-4-5` entre deux délimiteurs `points 1-2-3-4-5-6` ;
+  - l’encadré est isolé du texte voisin par une ligne vide ;
 - `&lt;anc12&gt;` impose une largeur minimale de 13 cellules; le contenu est
    complété au besoin et les deux filets reprennent cette largeur.
 
@@ -457,6 +462,13 @@ importe aussi des documents externes (`.doc`, `.docx`, `.odt`, `.odf`, `.xls`,
 `.xlsx`, `.pdf`, `.rtf`, `.txt`, `.md`, `.markdown`) en les convertissant vers un document
 normal interne.
 
+Import DOCX des encadres:
+
+- a l'import, les paragraphes DOCX avec bordures (encadres Word) sont detectes ;
+- le contenu de ces paragraphes est marque automatiquement avec la balise
+   `&lt;anc&gt;` dans le document importe, pour conserver un rendu d'encadre en
+   traduction braille.
+
 Stockage des documents natifs:
 
 - les fichiers `.gnp` et `.gnb` sont enregistres compresses (compression
@@ -476,6 +488,8 @@ avec balises braille de structure:
    `points 1-2-3-4-5-6`, corps en `points 2-3-5-6`;
 - lignes de contenu: début de ligne en `points 1-2-3-4-5-6`, puis le même
    délimiteur avant chaque valeur de colonne.
+- quand la largeur configurée le permet, chaque ligne de tableau se ferme
+  explicitement sur le dernier caractère (`charactersPerLine`, ex. colonne 29).
 
 Comportement d'édition dans un tableau braille (importé Excel ou inséré manuellement):
 
@@ -494,6 +508,13 @@ Comportement d'édition dans un tableau braille (importé Excel ou inséré manu
    appuies sur `Delete`, une boîte de confirmation intégrée s'affiche avec le
    focus sur « Supprimer le tableau » et une annonce accessible ; en cas de
    confirmation, l'ensemble du bloc tableau est supprimé.
+
+Conversion des contours Unicode de tableaux (box drawing):
+
+- pendant la traduction texte -> braille, les caractères Unicode de cadre
+   (`U+2500..U+257F`) sont convertis automatiquement en contours braille 6 points ;
+- cette conversion maintient la compatibilité BRF (pas de points 7/8 introduits
+   par les contours).
 
 Création manuelle d'un tableau dans un document braille (`.gnb`):
 
